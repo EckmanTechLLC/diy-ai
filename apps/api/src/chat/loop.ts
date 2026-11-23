@@ -3,6 +3,7 @@ import {
   blockFields,
   buildSystemPrompt,
   checkCircuit,
+  formatPlanText,
   formatIssuesForModel,
   getBlock,
   replyJsonSchema,
@@ -11,6 +12,7 @@ import {
   type Block,
   type CircuitOrigin,
   type Finding,
+  type Plan,
   type ReplyTarget,
 } from '@diy-ai/core';
 import type { ActiveProviderResult, ChatMessage, LlmProvider } from '../llm';
@@ -33,6 +35,8 @@ export interface StoredMessage {
 export type ChatOutcome =
   | { kind: 'question'; text: string; reply: unknown }
   | { kind: 'unsupported'; text: string; reply: unknown }
+  /** A whole-job inventory with its deterministic plan, rendered as text. Creates no circuit; storing plans comes later. */
+  | { kind: 'inventory'; text: string; reply: unknown; plan: Plan }
   | { kind: 'circuit'; text: string; reply: unknown; circuit: CircuitModel; origin: CircuitOrigin; /** Add a new circuit, or replace the selected one. */ target: Exclude<ReplyTarget, 'none'>; /** Rule warnings; possibly empty. */ findings: Finding[] }
   | { kind: 'failed'; code: ChatFailureCode; text: string; /** Rule errors behind a rules_failed / block_rule_bug outcome. */ findings?: Finding[] };
 
@@ -150,12 +154,21 @@ export async function runChat(provider: LlmProvider, input: ChatInput): Promise<
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     const result = await provider.complete({ system, messages: turns, schema });
     if (!result.ok) return failed(result.error.code);
+    if (result.invalidReply?.length) {
+      // Unreadable or off-schema reply from a provider without grammar-constrained output: never resolved, always retried.
+      lastRuleErrors = null;
+      turns.push({ role: 'assistant', content: JSON.stringify(result.reply) });
+      turns.push({ role: 'user', content: formatIssuesForModel(result.invalidReply.map((message) => ({ code: 'BAD_REPLY' as const, message, ids: [] }))) });
+      continue;
+    }
     const res = resolveReply(result.reply);
     switch (res.kind) {
       case 'question':
         return { kind: 'question', text: res.text, reply: result.reply };
       case 'unsupported':
         return { kind: 'unsupported', text: res.message, reply: result.reply };
+      case 'inventory':
+        return { kind: 'inventory', text: `${res.message.trim()}\n\n${formatPlanText(res.plan)}`, reply: result.reply, plan: res.plan };
       case 'circuit': {
         const findings = checkCircuit(res.circuit, { edition: 'nec-2023' });
         const errors = findings.filter((f) => f.severity === 'error');

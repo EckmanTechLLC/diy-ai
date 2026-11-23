@@ -1,5 +1,6 @@
 import { BUILDING_BLOCKS, MAX_BLOCKS, MAX_COUNT, MIN_COUNT, blockFields } from './blocks';
 import { CATALOGUE, DEVICE_TYPES, TERMINAL_ROLES } from './catalogue';
+import { ROOM_RULES, ROOM_TYPES, MAX_FANS_PER_ROOM, MAX_LIGHTS_PER_GROUP, MAX_RECEPTACLES_PER_ROOM } from './planner';
 import { COUNT_FIELDS, LABEL_FIELDS } from './reply';
 import { CABLE_TYPES, WIRE_COLORS, conductorsOf } from './schema';
 
@@ -31,6 +32,29 @@ function deviceSection(): string {
   }).join('\n');
 }
 
+function inventorySection(): string {
+  const rules = ROOM_RULES.map((r) => `- ${r.title}`).join('\n');
+  return `# Whole jobs: room inventories
+
+When the user describes a job that spans several rooms, or asks you to plan or split the circuits, reply kind "inventory" instead of a circuit. You only list what is in each room; software decides the breaker sizes, which things share a circuit, and the GFCI and AFCI protection. Never choose breaker sizes, circuit grouping, GFCI or AFCI for an inventory. For one specific circuit the user describes, use the circuit kinds above.
+
+The software applies these room rules, so you never have to:
+${rules}
+
+For an inventory reply:
+- kind "inventory", target "none", breakerAmps 0, name "", blocks and custom empty lists.
+- basement: true when the space being planned is a basement, otherwise false.
+- rooms: every room once. Each room has id (short, unique, lowercase, no spaces), name (what the user calls it), type (one of ${ROOM_TYPES.join(', ')}; use "other" for a room not in that list), receptacles (whole number, 0 to ${MAX_RECEPTACLES_PER_ROOM}; outlets are receptacles), lightGroups, fans (0 to ${MAX_FANS_PER_ROOM}) and attachedTo.
+- lightGroups: one entry per set of lights switched together: lights (1 to ${MAX_LIGHTS_PER_GROUP}) and switchLocations (1, or 2 when switches at both ends control the same lights). A room without lights has an empty list.
+- attachedTo: the id of the room this room belongs to (a closet of a bedroom), otherwise "".
+- maxReceptaclesPerCircuit and lightingBreakerAmps: 0 unless the user states a preference (a receptacle limit per circuit; 15 or 20 A for lighting).
+- message: a short note to the user about what you listed.
+Rooms are separate rooms unless the user says one is part of another; set attachedTo only then, and do not ask whether a room is attached. Never guess a number: when the user gives no number, or only a vague amount such as "some" or "a few", for the receptacles, lights or fans of a room, that count cannot be determined.
+Ask one clarifying question (kind "question") when a count, a room's type, the number of switch locations for a light group, or whether the space is a basement cannot be determined. The rule above to always ask for the breaker size applies to single-circuit requests only; for an inventory never ask for breaker sizes.
+
+`;
+}
+
 export function buildSystemPrompt(): string {
   return `# Your job
 
@@ -44,24 +68,26 @@ You help a person plan the wiring of a US residential electrical project. From t
 
 # How to reply
 
-Reply with one JSON object with exactly these seven keys, always all present:
-- kind: one of "question", "circuit", "custom", "unsupported". This is the single outcome of your reply.
+Reply with one JSON object with exactly these eleven keys, always all present:
+- kind: one of "question", "circuit", "custom", "inventory", "unsupported". This is the single outcome of your reply.
 - target: for kind "circuit" or "custom", "new" or "selected" (see "Several circuits"). For every other kind, "none".
 - message: text. For question, the one clear clarifying question. For unsupported, why the job cannot be done here. For circuit and custom, a short note to the user. Never empty.
 - breakerAmps: for kind "circuit", the breaker size, 15 or 20. For every other kind, 0.
 - name: for kind "circuit", a short name for the circuit, such as "Basement lights". For every other kind, "".
 - blocks: for kind "circuit", the building blocks of the circuit, in order (see "Building blocks"). For every other kind, an empty list.
 - custom: for kind "custom", a list holding exactly one full circuit (see "Custom circuits"). For every other kind, an empty list.
+- basement, rooms, maxReceptaclesPerCircuit, lightingBreakerAmps: for kind "inventory" only (see "Whole jobs: room inventories"). For every other kind: false, an empty list, 0, 0.
 
 Choosing:
-1. If information you need is missing, ask exactly one question about the most important missing item. Do not guess. Do not ask about things a default covers (labels), or about things you can read from the request. You need to know: how many of each thing (receptacles, lights), how many switch locations control the lights, where the lights are relative to the switches (power arriving at the switch box, or at a light first), and the breaker size (15 or 20 A).
-2. If a combination of building blocks fits the job, reply "circuit". Always prefer blocks over a custom circuit.
-3. Use custom only when no combination of blocks fits but the job is within scope and every part can be built from the catalogue below. A custom circuit is shown to the user as unverified.
-4. Otherwise reply unsupported.
+1. If information you need is missing, ask exactly one question about the most important missing item. Do not guess. Do not ask about things a default covers (labels), or about things you can read from the request. For a single circuit you need to know: how many of each thing (receptacles, lights), how many switch locations control the lights, where the lights are relative to the switches (power arriving at the switch box, or at a light first), and the breaker size (15 or 20 A).
+2. If the user describes a job spanning several rooms, or asks you to plan the circuits, reply "inventory" (see "Whole jobs: room inventories").
+3. If a combination of building blocks fits one described circuit, reply "circuit". Always prefer blocks over a custom circuit.
+4. Use custom only when no combination of blocks fits but the job is within scope and every part can be built from the catalogue below. A custom circuit is shown to the user as unverified.
+5. Otherwise reply unsupported.
 
 The message in a circuit or custom reply is short, plain language for the user: what you are wiring and which choices you made.
 
-# Several circuits
+${inventorySection()}# Several circuits
 
 A project can hold several circuits, for example a basement with a lighting circuit, a receptacle circuit and a bathroom circuit. Each reply produces exactly one circuit. A note before the user's message may list the project's circuits and mark one of them as selected.
 - Use target "selected" only when the user is clearly changing the circuit marked as selected. Your reply then replaces that circuit completely, so give the full corrected circuit, not a patch.

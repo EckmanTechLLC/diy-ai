@@ -2,6 +2,7 @@
 import type { z } from 'zod';
 import { BLOCK_TYPES, MAX_BLOCKS, blockFields, buildCircuit, getBlock, type Block } from './blocks';
 import { COUNT_FIELDS, LABEL_FIELDS, REPLY_KINDS, UNUSED_NUMBER, replyShapeProblem, type ReplyTarget } from './reply';
+import { InventorySchema, planCircuits, validateInventory, type Inventory, type Plan, type PlanOptions } from './planner';
 import type { CircuitModel } from './schema';
 import type { TemplateParams } from './templates';
 import { validateCircuit, type Issue, type IssueCode } from './validate';
@@ -13,7 +14,10 @@ export type ReplyIssueCode =
   | 'BAD_BLOCK_LIST'
   | 'UNKNOWN_BLOCK'
   | 'BAD_BLOCK'
-  | 'BLOCK_BUG';
+  | 'BLOCK_BUG'
+  | 'BAD_INVENTORY'
+  | 'BAD_PLAN_OPTION'
+  | 'PLAN_ERROR';
 export interface ReplyIssue {
   code: ReplyIssueCode;
   message: string;
@@ -31,6 +35,8 @@ export type Resolution =
   | { kind: 'question'; text: string }
   | { kind: 'unsupported'; message: string }
   | { kind: 'circuit'; circuit: CircuitModel; origin: CircuitOrigin; message: string; /** Add a new circuit, or replace the selected one. */ target: Exclude<ReplyTarget, 'none'> }
+  /** A whole-job inventory and the deterministic plan made from it (ADR-009). Creates no circuit. */
+  | { kind: 'inventory'; inventory: Inventory; options: PlanOptions; plan: Plan; message: string }
   | { kind: 'invalid'; issues: ReplyIssue[] };
 
 const invalid = (code: ReplyIssueCode, message: string, ids: string[] = []): Resolution => ({
@@ -55,6 +61,8 @@ export function resolveReply(reply: unknown): Resolution {
       return typeof message === 'string' && message.trim() ? { kind: 'unsupported', message } : invalid('BAD_REPLY', 'message must be a non-empty explanation');
     case 'circuit':
       return resolveBlocks(reply, reply.target as 'new' | 'selected');
+    case 'inventory':
+      return resolveInventory(reply);
     default:
       return resolveCustom(reply, reply.target as 'new' | 'selected');
   }
@@ -136,6 +144,38 @@ function resolveBlocks(reply: Record<string, unknown>, target: 'new' | 'selected
   if (structural.length > 0)
     return { kind: 'invalid', issues: structural.map((i) => ({ ...i, code: 'BLOCK_BUG' as const, message: `the blocks produced an invalid circuit (bug): ${i.message}` })) };
   return { kind: 'circuit', circuit, origin: { kind: 'blocks', breakerAmps: amps, blocks, name }, message: reply.message, target };
+}
+
+function resolveInventory(reply: Record<string, unknown>): Resolution {
+  if (typeof reply.message !== 'string') return invalid('BAD_REPLY', 'an inventory reply needs message (string), basement (true or false), rooms (list), maxReceptaclesPerCircuit and lightingBreakerAmps');
+  const input = { basement: reply.basement ?? false, rooms: reply.rooms ?? [] };
+  const found = validateInventory(input);
+  const issues: ReplyIssue[] = found.map((i) => ({ code: 'BAD_INVENTORY', message: i.message, ids: i.ids }));
+
+  // 0 means "use the default".
+  const options: PlanOptions = {};
+  const maxRec = reply.maxReceptaclesPerCircuit;
+  if (maxRec !== undefined && maxRec !== null && maxRec !== UNUSED_NUMBER) {
+    if (typeof maxRec === 'number' && Number.isInteger(maxRec) && maxRec >= 1 && maxRec <= 24) options.maxReceptaclesPerCircuit = maxRec;
+    else issues.push(issue('BAD_PLAN_OPTION', `maxReceptaclesPerCircuit must be 0 (default) or a whole number from 1 to 24 (got ${JSON.stringify(maxRec)})`));
+  }
+  const lightAmps = reply.lightingBreakerAmps;
+  if (lightAmps !== undefined && lightAmps !== null && lightAmps !== UNUSED_NUMBER) {
+    if (lightAmps === 15 || lightAmps === 20) options.lightingBreakerAmps = lightAmps;
+    else issues.push(issue('BAD_PLAN_OPTION', `lightingBreakerAmps must be 0 (default), 15 or 20 (got ${JSON.stringify(lightAmps)})`));
+  }
+  if (issues.length > 0) return { kind: 'invalid', issues };
+
+  const inventory = InventorySchema.parse(input);
+  let plan: Plan;
+  try {
+    plan = planCircuits(inventory, options);
+  } catch (e) {
+    return invalid('PLAN_ERROR', `the plan could not be made: ${e instanceof Error ? e.message : String(e)}`);
+  }
+  const errors = plan.findings.filter((f) => f.severity === 'error');
+  if (errors.length > 0) return { kind: 'invalid', issues: errors.map((f) => ({ code: 'PLAN_ERROR' as const, message: f.message, ids: f.roomIds })) };
+  return { kind: 'inventory', inventory, options, plan, message: reply.message };
 }
 
 const ENDPOINT_FIELDS: Record<string, readonly string[]> = {

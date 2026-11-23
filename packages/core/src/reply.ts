@@ -1,5 +1,5 @@
 // Provider-neutral reply contract (ADR-006, ADR-008). The model returns one flat object: a `kind` naming the single
-// outcome (question / circuit / custom / unsupported) plus always-present fields. Fields that do not apply to the
+// outcome (question / circuit / custom / inventory / unsupported) plus always-present fields. Fields that do not apply to the
 // chosen kind carry an "unused" value: 0 for breakerAmps / counts / amps, an empty array for blocks and custom, an
 // empty string for unused text and labels, false for gfciFirst, "none" for target. `target` says whether a circuit
 // outcome adds a new circuit to the project or replaces the selected one (ADR-008). A circuit is a breaker size plus an ordered list of
@@ -11,11 +11,12 @@
 import { z } from 'zod';
 import { BLOCK_TYPES, BUILDING_BLOCKS, blockFields } from './blocks';
 import { DEVICE_TYPES } from './catalogue';
+import { ROOM_TYPES } from './planner/inventory';
 import { CABLE_TYPES, WIRE_COLORS } from './schema';
 
 const Str = z.string();
 
-export const REPLY_KINDS = ['question', 'circuit', 'custom', 'unsupported'] as const;
+export const REPLY_KINDS = ['question', 'circuit', 'custom', 'inventory', 'unsupported'] as const;
 /** Where a circuit outcome goes: `new` adds a circuit, `selected` replaces the selected one, `none` for outcomes without a circuit. */
 export const REPLY_TARGETS = ['none', 'new', 'selected'] as const;
 export type ReplyTarget = (typeof REPLY_TARGETS)[number];
@@ -83,6 +84,19 @@ for (const f of LABEL_FIELDS) blockEntryShape[f] = Str.describe(`Label text for 
 export const ReplyBlockSchema = z.strictObject(blockEntryShape);
 export type ReplyBlock = z.infer<typeof ReplyBlockSchema>;
 
+/** One room of an inventory reply (the planner's room, ADR-009): counts only, no electrical decisions. */
+export const ReplyRoomSchema = z.strictObject({
+  id: Str.describe('A short unique id for the room, lowercase, no spaces.'),
+  name: Str.describe('The room as the user calls it, such as "Bathroom".'),
+  type: z.enum(ROOM_TYPES).describe('The room type; use "other" for any room not in the list.'),
+  receptacles: z.number().describe('How many receptacles (outlets) the room has.'),
+  lightGroups: z
+    .array(z.strictObject({ lights: z.number().describe('How many lights are controlled together.'), switchLocations: z.number().describe('How many switch locations control this group: 1, or 2 when switches are at both ends.') }))
+    .describe('The lights of the room, one entry per set of lights that are switched together. Empty list when the room has no lights.'),
+  fans: z.number().describe('How many ceiling or exhaust fans the room has.'),
+  attachedTo: Str.describe('The id of the room this one belongs to, such as the bedroom a closet is part of; otherwise "".'),
+});
+
 export const ReplySchema = z
   .strictObject({
     kind: z.enum(REPLY_KINDS).describe('The single outcome of this reply.'),
@@ -94,6 +108,10 @@ export const ReplySchema = z
     name: Str.describe('kind circuit: a short name for the circuit, such as "Basement lights". Every other kind: "".'),
     blocks: z.array(ReplyBlockSchema).describe('kind circuit: the building blocks in the order power flows from the panel. Every other kind: empty list.'),
     custom: z.array(ReplyCircuitSchema).describe('kind custom: a list with exactly one full circuit. Every other kind: empty list.'),
+    basement: z.boolean().describe('kind inventory: true when the space being planned is a basement. Every other kind: false.'),
+    rooms: z.array(ReplyRoomSchema).describe('kind inventory: every room of the job, listed once each. Every other kind: empty list.'),
+    maxReceptaclesPerCircuit: z.number().describe('kind inventory: the most receptacles per circuit the user asked for, or 0 for the default. Every other kind: 0.'),
+    lightingBreakerAmps: z.literal([UNUSED_NUMBER, 15, 20]).describe('kind inventory: the lighting breaker size the user asked for, 15 or 20, or 0 for the default. Every other kind: 0.'),
   })
   .refine((r) => replyShapeProblem(r) === null, { message: 'fields not used by kind must hold their unused value; kind custom needs one circuit' });
 export type Reply = z.infer<typeof ReplySchema>;
@@ -110,6 +128,16 @@ export function replyShapeProblem(r: Record<string, unknown>): string | null {
   const unusedBlocks = r.blocks === undefined || r.blocks === null || (Array.isArray(r.blocks) && r.blocks.length === 0);
   const unusedCustom = r.custom === undefined || r.custom === null || (Array.isArray(r.custom) && r.custom.length === 0);
   const targetUnused = target === undefined || target === null || target === TARGET_NONE;
+  const inventoryUnused = (['basement', 'rooms', 'maxReceptaclesPerCircuit', 'lightingBreakerAmps'] as const).filter((k) => {
+    const v = r[k];
+    return !(v === undefined || v === null || v === false || v === UNUSED_NUMBER || (Array.isArray(v) && v.length === 0));
+  });
+  if (kind === 'inventory') {
+    if (!targetUnused || !unusedAmps || !unusedName || !unusedBlocks || !unusedCustom)
+      return `kind inventory must leave target, breakerAmps, name, blocks and custom unused (target "none", breakerAmps ${UNUSED_NUMBER}, empty name, empty blocks and custom lists)`;
+    return null;
+  }
+  if (inventoryUnused.length > 0) return `kind ${String(kind)} must leave ${inventoryUnused.join(', ')} unused (basement false, empty rooms list, 0 for the two plan options)`;
   if (kind === 'circuit' || kind === 'custom') {
     if (target !== 'new' && target !== 'selected') return `kind ${String(kind)} needs target "new" or "selected"`;
   }

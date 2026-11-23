@@ -48,6 +48,13 @@ function stubClaude(opts: { create?: (params: any, options?: any) => any; models
   return { client, create };
 }
 
+const validReply = {
+  kind: 'question', target: 'none', message: 'Which room?', breakerAmps: 0, name: '', blocks: [], custom: [],
+  basement: false, rooms: [], maxReceptaclesPerCircuit: 0, lightingBreakerAmps: 0,
+};
+const toolUse = (input: unknown) => ({ type: 'tool_use', id: 'tu_1', name: 'reply', input });
+const textBlock = (text: string) => ({ type: 'text', text });
+
 const claudeMessage = (over: Record<string, unknown> = {}) => ({
   id: 'msg_1',
   type: 'message',
@@ -56,7 +63,7 @@ const claudeMessage = (over: Record<string, unknown> = {}) => ({
   stop_reason: 'end_turn',
   content: [
     { type: 'thinking', thinking: '', signature: 'x' },
-    { type: 'text', text: JSON.stringify({ question: 'Which room?' }) },
+    { type: 'tool_use', id: 'tu_1', name: 'reply', input: validReply },
   ],
   usage: { input_tokens: 10, output_tokens: 5, cache_read_input_tokens: 3, cache_creation_input_tokens: 0 },
   ...over,
@@ -427,7 +434,7 @@ describe('Claude backend', () => {
     const out = await p.complete({ system, messages: convo, schema, signal: ctl.signal });
     expect(out).toEqual({
       ok: true,
-      reply: { question: 'Which room?' },
+      reply: validReply,
       model: 'claude-opus-5-5',
       usage: { inputTokens: 10, outputTokens: 5, cacheReadTokens: 3, cacheCreationTokens: 0 },
     });
@@ -436,13 +443,21 @@ describe('Claude backend', () => {
     expect(params.max_tokens).toBe(16000);
     expect(params.thinking).toEqual({ type: 'adaptive' });
     expect(params.output_config.effort).toBe('high');
-    expect(params.output_config.format.type).toBe('json_schema');
-    expect(params.output_config.format.schema.properties.kind).toBeDefined();
-    expect(params.output_config.format.schema.$schema).toBeUndefined();
-    expect(params.system).toEqual([{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }]);
+    // Not an enforced structured-output format: the reply schema is a non-strict tool (task 30).
+    expect(params.output_config).toEqual({ effort: 'high' });
+    expect(params.tools).toHaveLength(1);
+    expect(params.tools[0].name).toBe('reply');
+    expect(params.tools[0].strict).toBeUndefined();
+    expect(params.tools[0].input_schema.properties.kind).toBeDefined();
+    expect(params.tools[0].input_schema.$schema).toBeUndefined();
+    expect(params.tool_choice).toEqual({ type: 'auto', disable_parallel_tool_use: true });
+    expect(params.system).toHaveLength(1);
+    expect(params.system[0].text.startsWith(system)).toBe(true);
+    expect(params.system[0].text).toContain('"reply" tool');
+    expect(params.system[0].cache_control).toEqual({ type: 'ephemeral' });
     expect(params.messages).toEqual(convo);
     expect(options.signal).toBe(ctl.signal);
-    for (const banned of ['budget_tokens', 'tool_choice', 'temperature', 'output_format']) {
+    for (const banned of ['budget_tokens', 'temperature', 'output_format', 'json_schema']) {
       expect(JSON.stringify(params)).not.toContain(banned);
     }
     // refusal fallback: verified against the real API to combine with structured output (task 14)
@@ -472,9 +487,29 @@ describe('Claude backend', () => {
     });
   });
 
-  it('bad JSON or no text -> bad_json', async () => {
-    for (const content of [[{ type: 'text', text: 'not json' }], []]) {
-      expect(await run(async () => claudeMessage({ content }))).toEqual({ ok: false, error: expect.objectContaining({ code: 'bad_json' }) });
+  it('a text reply holding one JSON reply object is accepted', async () => {
+    const out: any = await run(async () => claudeMessage({ content: [textBlock(JSON.stringify(validReply))] }));
+    expect(out.ok).toBe(true);
+    expect(out.reply).toEqual(validReply);
+    expect(out.invalidReply).toBeUndefined();
+  });
+
+  it('a tool input that does not match ReplySchema is flagged for retry with actionable problems, never passed as valid', async () => {
+    const wrongShape: any = await run(async () => claudeMessage({ content: [toolUse({ ...validReply, kind: 'maybe', extra: 1 })] }));
+    expect(wrongShape.ok).toBe(true);
+    expect(wrongShape.invalidReply.length).toBeGreaterThan(0);
+    expect(wrongShape.invalidReply.join(' ')).toMatch(/kind/);
+    const missing: any = await run(async () => claudeMessage({ content: [toolUse({ kind: 'question', message: 'x' })] }));
+    expect(missing.invalidReply.join(' ')).toMatch(/target|breakerAmps|rooms/);
+    const unusedField: any = await run(async () => claudeMessage({ content: [toolUse({ ...validReply, breakerAmps: 15 })] }));
+    expect(unusedField.invalidReply.join(' ')).toContain('must leave breakerAmps unused');
+  });
+
+  it('malformed JSON text or no tool call -> flagged for retry, not a crash and not a silent pass', async () => {
+    for (const content of [[textBlock('not json')], [], [textBlock('{"kind":')]]) {
+      const out: any = await run(async () => claudeMessage({ content }));
+      expect(out.ok).toBe(true);
+      expect(out.invalidReply[0]).toContain('"reply" tool');
     }
   });
 

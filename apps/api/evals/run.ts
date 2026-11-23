@@ -22,6 +22,8 @@ export interface CallRecord {
   reply: unknown;
   errorCode: string | null;
   errorMessage: string | null;
+  /** The provider flagged this reply as unreadable or off-schema (hosted Claude only); it was retried, not resolved. */
+  malformed?: string[];
   usage?: { inputTokens: number; outputTokens: number; cacheReadTokens?: number; cacheCreationTokens?: number };
 }
 
@@ -126,6 +128,7 @@ function recording(inner: LlmProvider): { provider: LlmProvider; take(): CallRec
           reply: res.ok ? res.reply : null,
           errorCode: res.ok ? null : res.error.code,
           errorMessage: res.ok ? null : res.error.message,
+          ...(res.ok && res.invalidReply?.length ? { malformed: res.invalidReply } : {}),
           ...(res.ok && res.usage ? { usage: res.usage } : {}),
         });
         return res;
@@ -186,7 +189,7 @@ async function runCase(c: EvalCase, rec: ReturnType<typeof recording>): Promise<
     });
     if (!grade.pass) break;
     if (outcome.kind === 'failed') break;
-    stored.push({ role: 'assistant', content: outcome.text, kind: outcome.kind, reply: outcome.reply });
+    stored.push({ role: 'assistant', content: outcome.text, kind: outcome.kind === 'inventory' ? 'question' : outcome.kind, reply: outcome.reply });
     if (!seeded) circuits = outcome.kind === 'circuit' ? [{ id: 'eval', name: 'Circuit 1', circuit: outcome.circuit, origin: outcome.origin }] : [];
   }
   const calls = steps.reduce((n, s) => n + s.calls.length, 0);

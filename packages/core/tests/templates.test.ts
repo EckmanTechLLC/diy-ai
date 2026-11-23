@@ -102,7 +102,7 @@ describe('templates', () => {
 // ---- reply schema ----
 
 // Wire form: a circuit is a breakerAmps number, a name and a list of flat block entries; unused fields hold their unused value.
-const unused = { target: 'none', breakerAmps: 0, name: '', blocks: [] as unknown[], custom: [] as unknown[] };
+const unused = { target: 'none', breakerAmps: 0, name: '', blocks: [] as unknown[], custom: [] as unknown[], basement: false, rooms: [] as unknown[], maxReceptaclesPerCircuit: 0, lightingBreakerAmps: 0 };
 /** A flat block entry as the model writes it: every key present, unused ones 0 / false / "". */
 const entry = (type: string, over: Record<string, unknown> = {}) => ({
   type,
@@ -157,7 +157,7 @@ describe('reply schema', () => {
   });
   it('has no template fields', () => {
     const props = Object.keys((replyJsonSchema().properties ?? {}) as object);
-    expect(props).toEqual(['kind', 'target', 'message', 'breakerAmps', 'name', 'blocks', 'custom']);
+    expect(props).toEqual(['kind', 'target', 'message', 'breakerAmps', 'name', 'blocks', 'custom', 'basement', 'rooms', 'maxReceptaclesPerCircuit', 'lightingBreakerAmps']);
     expect(JSON.stringify(replyJsonSchema())).not.toMatch(/template|labels"/i);
   });
   it('rejects malformed replies', () => {
@@ -544,7 +544,7 @@ describe('buildSystemPrompt', () => {
     for (const s of ['order power flows from the panel', "previous block's feed-through box", 'One breaker per circuit', 'breaker size', 'switch locations', 'Always prefer blocks over a custom circuit']) expect(p).toContain(s);
   });
   it('explains several circuits and the target values', () => {
-    for (const s of ['# Several circuits', 'target "selected"', 'target "new"', 'marked as selected', 'own breaker', 'unclear', 'exactly these seven keys']) expect(p).toContain(s);
+    for (const s of ['# Several circuits', 'target "selected"', 'target "new"', 'marked as selected', 'own breaker', 'unclear', 'exactly these eleven keys']) expect(p).toContain(s);
   });
   it('states the limits', () => {
     for (const s of ['US residential', 'coordinates', 'unsupported', 'service panel', 'aluminium', 'knob-and-tube', 'clarifying question', 'unverified']) expect(p).toContain(s);

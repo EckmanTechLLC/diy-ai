@@ -101,7 +101,8 @@ export function chatRoutes(db: Db, resolveProvider: ProviderResolver) {
             projectId: id,
             role: 'assistant',
             content: outcome.text,
-            kind: outcome.kind === 'failed' ? 'error' : outcome.kind,
+            // An inventory reply is stored as a plain assistant message (no plan storage yet, no database change).
+            kind: outcome.kind === 'failed' ? 'error' : outcome.kind === 'inventory' ? 'question' : outcome.kind,
             reply: outcome.kind === 'failed' ? null : outcome.reply,
             origin: outcome.kind === 'circuit' ? outcome.origin : null,
             circuitId: affectedCircuitId,

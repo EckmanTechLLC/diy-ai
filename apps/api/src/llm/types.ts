@@ -39,7 +39,14 @@ export interface Usage {
 }
 
 export type CompleteResult =
-  | { ok: true; reply: unknown; usage?: Usage; model: string }
+  | {
+      ok: true;
+      reply: unknown;
+      usage?: Usage;
+      model: string;
+      /** Set by a provider whose output is not grammar-constrained (hosted Claude) when the reply is unreadable or does not match ReplySchema: what is wrong, phrased for the model. The loop retries instead of resolving. */
+      invalidReply?: string[];
+    }
   | { ok: false; error: ProviderError };
 
 export interface LlmProvider {
