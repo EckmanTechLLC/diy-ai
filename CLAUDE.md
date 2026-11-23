@@ -100,7 +100,9 @@ _(Add corrections and recurring mistakes here as they occur)_
 
 ## Known Issues
 - **Claude reply-schema size (fixed 2026-11-23, task 27).** Claude rejected the schema as "compiled grammar is too large" when the endpoint sub-schema was inlined twice; it is now defined once under `$defs` (lossless). The schema sits close to Claude's limit: any addition to `reply.ts` can re-break it (see Lessons Learned 2). Claude v3 test set: 39/43.
-- **Eval cases to correct before the next run** (user decision 2026-11-16: the model always asks for the breaker size when it is not stated): `template-sp-2`, `template-3w-2`, `template-gfci-2`, `template-tg-2` should expect a question; `mb-6` (dishwasher) should not say "not GFCI" and should not grade the GFCI flag.
+- **Test set v4 (2026-11-23, 61 cases, one run each):** Claude 60/61, `gpt-oss-120b` 54/61, `qwen3.6-coder` 43/61. Details in `apps/api/evals/results/comparison-v4.md` (local only).
+- **Unrequested build (found by v4 case `edit-3`):** both local models replied `build` to "Use at most 6 outlets per circuit." and the loop built the stored plan's circuits. Claude did not. Nothing in code stops a `build` reply the user did not ask for.
+- **Eval case `mb-6`** still has "(not GFCI)" in its user text; `qwen3.6-coder` declines it for that reason.
 
 ## Current Decisions (quick reference)
 - Preferred local model: `gpt-oss-120b` (Odin box, port 8004); `qwen3.6-coder` (port 8002) is faster but declines supported jobs.

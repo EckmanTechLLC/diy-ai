@@ -1,7 +1,21 @@
 /** Test-set types. Cases are data; grading lives in ../grader.ts. */
-import type { NetRole } from '@diy-ai/core';
+import type { InventoryInput, NetRole, PlanOptions } from '@diy-ai/core';
 
-export type Category = 'blocks' | 'multi-block' | 'counts' | 'target' | 'question' | 'multi-turn' | 'unsupported' | 'custom' | 'trap';
+export type Category =
+  | 'blocks'
+  | 'multi-block'
+  | 'counts'
+  | 'target'
+  | 'question'
+  | 'multi-turn'
+  | 'unsupported'
+  | 'custom'
+  | 'trap'
+  | 'inventory'
+  | 'inventory-question'
+  | 'plan-edit'
+  | 'build'
+  | 'routing';
 
 /** A device terminal addressed by catalogue type, e.g. { type: 'breaker', terminal: 'out' }. Ids are the model's choice, so facts never use them. */
 export interface TerminalRef {
@@ -31,6 +45,26 @@ export interface BlockExpect {
   gfciFirst?: boolean;
 }
 
+/**
+ * One expected room. Room names and ids are the model's choice and are never graded. `attachedTo` is the key of another
+ * expected room of this inventory, resolved by that room's type, so it is checked as "attached to a room of this type".
+ */
+export interface RoomExpect {
+  type: string;
+  receptacles: number;
+  /** Light groups as a multiset of {lights, switchLocations}; order does not matter. */
+  lightGroups: readonly { lights: number; switchLocations: 1 | 2 }[];
+  fans: number;
+  /** Type of the room this one is attached to; omitted or '' for a free-standing room. */
+  attachedToType?: string;
+}
+
+/** What a model's inventory must contain: the room count, each room (as a multiset), and the basement flag. */
+export interface InventoryExpect {
+  basement: boolean;
+  rooms: readonly RoomExpect[];
+}
+
 export type Expect =
   | { kind: 'question' }
   | { kind: 'unsupported' }
@@ -39,7 +73,16 @@ export type Expect =
   /** A custom (unverified) circuit that validates and satisfies the facts and counts. Types not listed in deviceCounts are unconstrained. */
   | { kind: 'custom'; facts: CustomFact[]; deviceCounts: Record<string, number>; breakerAmps?: number }
   /** Anything except exactly this block list: a question, an unsupported reply, a custom circuit or any other block list all pass. */
-  | { kind: 'not_blocks'; forbidden: readonly BlockExpect[] };
+  | { kind: 'not_blocks'; forbidden: readonly BlockExpect[] }
+  /**
+   * An inventory reply (no circuit). `edit` marks a revision of a stored inventory, so a reply with fewer rooms than
+   * expected is reported as a delta. `options` are graded only for the fields a case names.
+   */
+  | { kind: 'inventory'; inventory: InventoryExpect; options?: { maxReceptaclesPerCircuit?: number; lightingBreakerAmps?: 15 | 20 }; edit?: boolean }
+  /** The model builds the stored plan (the loop accepted it: a plan existed and was not built). */
+  | { kind: 'build' }
+  /** The model must not build (there is no plan): a question passes; a build reply the loop blocked does not. */
+  | { kind: 'not_build' };
 
 export interface Step {
   /** User message sent at this step. */
@@ -59,6 +102,8 @@ export interface SeedCircuit {
 export interface Seed {
   circuits: readonly SeedCircuit[];
   selected: number | null;
+  /** A stored plan: the inventory (with ids), the options and whether it is already built. */
+  plan?: { inventory: InventoryInput; options?: PlanOptions; built?: boolean };
 }
 
 export interface EvalCase {

@@ -1,7 +1,7 @@
 /** Deterministic grading of one chat outcome against one expectation. No network, no LLM. */
-import { CATALOGUE, analyzeNets, checkCircuit, computeNets, endpointKey, validateCircuit, type Block, type CircuitModel } from '@diy-ai/core';
+import { CATALOGUE, analyzeNets, checkCircuit, computeNets, endpointKey, validateCircuit, type Block, type CircuitModel, type Inventory, type PlanOptions, type Room } from '@diy-ai/core';
 import type { ChatOutcome } from '../src/chat/loop';
-import type { BlockExpect, CustomFact, Expect, TerminalRef } from './cases';
+import type { BlockExpect, CustomFact, Expect, InventoryExpect, RoomExpect, TerminalRef } from './cases';
 
 export interface Grade {
   pass: boolean;
@@ -92,6 +92,75 @@ function compareBlocks(want: readonly BlockExpect[], got: readonly Block[]): { p
   return null;
 }
 
+/** A room reduced to what is graded: type, counts, light groups (sorted, so a multiset) and the type of the room it is attached to. Names and ids are the model's choice and are left out. */
+interface RoomShape {
+  type: string;
+  receptacles: number;
+  lightGroups: string[];
+  fans: number;
+  attachedToType: string;
+}
+
+const lightGroupKey = (g: { lights: number; switchLocations: number }) => `${g.lights}x${g.switchLocations}`;
+const shapeOfWant = (r: RoomExpect): RoomShape => ({ type: r.type, receptacles: r.receptacles, lightGroups: r.lightGroups.map(lightGroupKey).sort(), fans: r.fans, attachedToType: r.attachedToType ?? '' });
+function shapeOfGot(r: Room, all: readonly Room[]): RoomShape {
+  const target = r.attachedTo === '' ? undefined : all.find((x) => x.id === r.attachedTo);
+  return { type: r.type, receptacles: r.receptacles, lightGroups: r.lightGroups.map(lightGroupKey).sort(), fans: r.fans, attachedToType: r.attachedTo === '' ? '' : (target?.type ?? 'unknown room') };
+}
+const shapeKey = (s: RoomShape) => `${s.type}|rec ${s.receptacles}|lights [${s.lightGroups.join(', ')}]|fans ${s.fans}|attached to ${s.attachedToType || '-'}`;
+
+/** Compares an inventory with the expected one. Rooms are matched as a multiset of shapes; null when equal. */
+function compareInventory(want: InventoryExpect, got: Inventory, edit: boolean): { pattern: string; reason: string } | null {
+  const wantShapes = want.rooms.map(shapeOfWant);
+  const gotShapes = got.rooms.map((r) => shapeOfGot(r, got.rooms));
+  if (wantShapes.length !== gotShapes.length) {
+    const fewer = gotShapes.length < wantShapes.length;
+    return {
+      pattern: fewer ? (edit ? 'delta instead of full inventory' : 'dropped room') : 'extra room',
+      reason: `expected ${wantShapes.length} room(s) [${wantShapes.map(shapeKey).join(' ; ')}], got ${gotShapes.length} [${gotShapes.map(shapeKey).join(' ; ')}]`,
+    };
+  }
+  // Remove exact matches, then pair what is left (same type first) to say what differs.
+  const leftWant: RoomShape[] = [];
+  const leftGot = [...gotShapes];
+  for (const w of wantShapes) {
+    const i = leftGot.findIndex((g) => shapeKey(g) === shapeKey(w));
+    if (i >= 0) leftGot.splice(i, 1);
+    else leftWant.push(w);
+  }
+  for (const w of leftWant) {
+    const i = Math.max(0, leftGot.findIndex((g) => g.type === w.type));
+    const g = leftGot.splice(i, 1)[0]!;
+    if (g.type !== w.type) return { pattern: 'wrong room type', reason: `expected a ${w.type} room [${shapeKey(w)}], got ${g.type} [${shapeKey(g)}]` };
+    const detail = `room ${w.type}: expected [${shapeKey(w)}], got [${shapeKey(g)}]`;
+    if (g.receptacles !== w.receptacles || g.fans !== w.fans) return { pattern: 'wrong count', reason: detail };
+    if (g.lightGroups.join() !== w.lightGroups.join()) return { pattern: 'wrong light groups', reason: detail };
+    return { pattern: 'wrong attachment', reason: detail };
+  }
+  if (got.basement !== want.basement) return { pattern: 'wrong basement flag', reason: `basement: expected ${want.basement}, got ${got.basement}` };
+  return null;
+}
+
+/** Compact record of an inventory outcome for the result files. Names are kept for reading only. */
+export function summariseInventory(inventory: Inventory, options: PlanOptions) {
+  return {
+    basement: inventory.basement,
+    rooms: inventory.rooms.map((r) => {
+      const s = shapeOfGot(r, inventory.rooms);
+      return { name: r.name, type: r.type, receptacles: r.receptacles, lightGroups: r.lightGroups.map(lightGroupKey), fans: r.fans, attachedToType: s.attachedToType };
+    }),
+    options,
+  };
+}
+
+/** Failure for an outcome that is not a circuit when the case wanted a circuit: asked, declined, or routed to the wrong kind. */
+function notACircuit(outcome: ChatOutcome, question: string): Grade {
+  if (outcome.kind === 'question') return bad(question, `got ${describe(outcome)}`);
+  if (outcome.kind === 'inventory') return bad('wrong routing', `got an inventory (${describe(outcome)}) instead of a circuit`);
+  if (outcome.kind === 'build' || outcome.kind === 'build_blocked') return bad('wrong routing', `got ${describe(outcome)} instead of a circuit`);
+  return bad('declined a supported job', `got ${describe(outcome)}`);
+}
+
 export function gradeOutcome(expect: Expect, outcome: ChatOutcome): Grade {
   if (outcome.kind === 'failed') {
     const rules = outcome.findings ? ` (${[...new Set(outcome.findings.map((f) => f.ruleId))].join(', ')})` : '';
@@ -109,7 +178,7 @@ export function gradeOutcome(expect: Expect, outcome: ChatOutcome): Grade {
       return ok(`not ${blockTypes(expect.forbidden)} (${describe(outcome)})`);
     }
     case 'blocks': {
-      if (outcome.kind !== 'circuit') return bad(outcome.kind === 'question' ? 'asked instead of choosing' : 'declined a supported job', `got ${describe(outcome)}`);
+      if (outcome.kind !== 'circuit') return notACircuit(outcome, 'asked instead of choosing');
       if (outcome.origin.kind !== 'blocks') return bad('custom instead of blocks', 'used a custom circuit');
       const diff = compareBlocks(expect.blocks, outcome.origin.blocks);
       if (diff) return bad(diff.pattern, diff.reason);
@@ -118,8 +187,34 @@ export function gradeOutcome(expect: Expect, outcome: ChatOutcome): Grade {
       if (expect.target !== undefined && outcome.target !== expect.target) return bad('wrong target', `target: expected ${expect.target}, got ${outcome.target}`);
       return ok(`blocks ${blockTypes(expect.blocks)}`);
     }
+    case 'inventory': {
+      if (outcome.kind !== 'inventory') {
+        if (outcome.kind === 'question') return bad('asked instead of planning', `got ${describe(outcome)}`);
+        if (outcome.kind === 'circuit' || outcome.kind === 'build' || outcome.kind === 'build_blocked') return bad('wrong routing', `got ${describe(outcome)} instead of an inventory`);
+        return bad('declined a supported job', `got ${describe(outcome)}`);
+      }
+      const diff = compareInventory(expect.inventory, outcome.inventory, expect.edit ?? false);
+      if (diff) return bad(diff.pattern, diff.reason);
+      const o = expect.options;
+      if (o?.maxReceptaclesPerCircuit !== undefined && (outcome.options.maxReceptaclesPerCircuit ?? 0) !== o.maxReceptaclesPerCircuit)
+        return bad('wrong option', `maxReceptaclesPerCircuit: expected ${o.maxReceptaclesPerCircuit}, got ${outcome.options.maxReceptaclesPerCircuit ?? 'default'}`);
+      if (o?.lightingBreakerAmps !== undefined && outcome.options.lightingBreakerAmps !== o.lightingBreakerAmps)
+        return bad('wrong option', `lightingBreakerAmps: expected ${o.lightingBreakerAmps}, got ${outcome.options.lightingBreakerAmps ?? 'default'}`);
+      return ok(`inventory of ${outcome.inventory.rooms.length} room(s)`);
+    }
+    case 'build':
+      if (outcome.kind === 'build') return ok(`built ${outcome.circuits.length} circuit(s)`);
+      if (outcome.kind === 'question') return bad('asked instead of building', `got ${describe(outcome)}`);
+      if (outcome.kind === 'inventory') return bad('revised inventory instead of building', `got ${describe(outcome)}`);
+      if (outcome.kind === 'build_blocked') return bad('build blocked', `the loop refused the build: ${outcome.text}`);
+      return bad('wrong routing', `got ${describe(outcome)}`);
+    case 'not_build':
+      if (outcome.kind === 'question') return ok('asked');
+      if (outcome.kind === 'build_blocked') return bad('built without a plan', `model replied build with nothing to build (${describe(outcome)})`);
+      if (outcome.kind === 'build') return bad('built without a plan', `got ${describe(outcome)}`);
+      return bad('wrong routing', `got ${describe(outcome)}`);
     case 'custom': {
-      if (outcome.kind !== 'circuit') return bad(outcome.kind === 'question' ? 'asked instead of building' : 'declined a supported job', `got ${describe(outcome)}`);
+      if (outcome.kind !== 'circuit') return notACircuit(outcome, 'asked instead of building');
       if (outcome.origin.kind !== 'custom') return bad('blocks instead of custom', `used blocks ${outcome.origin.kind === 'blocks' ? blockTypes(outcome.origin.blocks) : outcome.origin.kind}`);
       const issues = validateCircuit(outcome.circuit);
       if (issues.length > 0) return bad('invalid circuit', `${issues.length} validation issue(s), first: ${issues[0]!.message}`);
@@ -146,6 +241,10 @@ export function describe(outcome: ChatOutcome): string {
   switch (outcome.kind) {
     case 'circuit':
       return outcome.origin.kind === 'blocks' ? `blocks ${blockTypes(outcome.origin.blocks)}` : outcome.origin.kind === 'template' ? `template ${outcome.origin.templateId}` : 'custom circuit';
+    case 'inventory':
+      return `inventory ${outcome.inventory.rooms.length} room(s)`;
+    case 'build':
+      return `build ${outcome.circuits.length} circuit(s)`;
     case 'failed':
       return `failed (${outcome.code})`;
     default:

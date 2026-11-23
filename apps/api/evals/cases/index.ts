@@ -1,6 +1,6 @@
-import type { EvalCase } from './types';
+import type { EvalCase, InventoryExpect, RoomExpect } from './types';
 
-export type { BlockExpect, Category, CustomFact, EvalCase, Expect, Seed, SeedCircuit, Step, TerminalRef } from './types';
+export type { BlockExpect, Category, CustomFact, EvalCase, Expect, InventoryExpect, RoomExpect, Seed, SeedCircuit, Step, TerminalRef } from './types';
 
 // Former whole-circuit templates as the equivalent block lists (verified equal to the old fixtures in packages/core tests).
 const SP = [{ type: 'switch_lights', count: 1 }]; // single_pole_switch: one switch, one light
@@ -16,6 +16,39 @@ const groundedCustom = (hotTo: { type: string; terminal: string }[], counts: Rec
   ],
   deviceCounts: counts,
   ...(breakerAmps ? { breakerAmps } : {}),
+});
+
+/** Shorthand for an expected room: type, receptacles, light groups as [lights, switchLocations], fans, attached-to type. */
+const room = (type: string, receptacles: number, groups: [number, 1 | 2][], fans = 0, attachedToType?: string): RoomExpect => ({
+  type,
+  receptacles,
+  lightGroups: groups.map(([lights, switchLocations]) => ({ lights, switchLocations })),
+  fans,
+  ...(attachedToType ? { attachedToType } : {}),
+});
+
+// The user's basement description (task 29/30 smoke text) and what a correct inventory for it holds.
+const BASEMENT_TEXT =
+  'Basement living space: 8 outlets, 8 recessed lights controlled by 2 switches on either side of the space. A bathroom with 3 outlets, 1 switch, 1 light and a fan. A closet with 1 light and 1 switch. A bedroom with 1 switch, 5 outlets and 2 recessed lights. Plan the circuits.';
+const BASEMENT_EXPECT: InventoryExpect = {
+  basement: true,
+  rooms: [room('living_area', 8, [[8, 2]]), room('bathroom', 3, [[1, 1]], 1), room('closet', 0, [[1, 1]]), room('bedroom', 5, [[2, 1]])],
+};
+
+/** The stored inventory the plan-edit and build cases start from (not built): a bedroom, its closet (not attached), a hallway and a bathroom. */
+const EDIT_SEED = {
+  basement: false,
+  rooms: [
+    { id: 'bedroom', name: 'Bedroom', type: 'bedroom' as const, receptacles: 4, lightGroups: [{ lights: 1, switchLocations: 1 as const }], fans: 0, attachedTo: '' },
+    { id: 'closet', name: 'Closet', type: 'closet' as const, receptacles: 0, lightGroups: [{ lights: 1, switchLocations: 1 as const }], fans: 0, attachedTo: '' },
+    { id: 'hall', name: 'Hallway', type: 'hallway' as const, receptacles: 1, lightGroups: [{ lights: 2, switchLocations: 1 as const }], fans: 0, attachedTo: '' },
+    { id: 'bath', name: 'Bathroom', type: 'bathroom' as const, receptacles: 2, lightGroups: [{ lights: 1, switchLocations: 1 as const }], fans: 1, attachedTo: '' },
+  ],
+};
+/** The seed as an expected inventory, with a change applied to each room. */
+const editExpect = (change: (r: RoomExpect) => RoomExpect): InventoryExpect => ({
+  basement: EDIT_SEED.basement,
+  rooms: EDIT_SEED.rooms.map((r) => change(room(r.type, r.receptacles, r.lightGroups.map((g) => [g.lights, g.switchLocations]), r.fans))),
 });
 
 export const CASES: EvalCase[] = [
@@ -37,10 +70,10 @@ export const CASES: EvalCase[] = [
     steps: [
       {
         user: 'One switch should control one light in my hallway. Power comes into the switch box, and from there a cable runs to the light fixture.',
-        expect: { kind: 'blocks', blocks: SP },
+        expect: { kind: 'question' },
       },
     ],
-    rationale: 'One switch, one light, power at the switch box first: single-pole template applies; breaker size not stated so no parameter is checked.',
+    rationale: 'Breaker size is not stated and the prompt says to always ask for it for a single circuit. Corrected in task 37 (user decision 2026-11-16): was blocks switch_lights x1 with no breaker graded; now a question.',
   },
   {
     id: 'template-3w-1',
@@ -59,10 +92,10 @@ export const CASES: EvalCase[] = [
     steps: [
       {
         user: 'My hallway light needs a switch at each end. The power cable arrives at the first switch box, and the light is wired from the second switch box.',
-        expect: { kind: 'blocks', blocks: TW },
+        expect: { kind: 'question' },
       },
     ],
-    rationale: 'One light from two places, power at the first switch box, light beyond the second: 3-way template applies.',
+    rationale: 'Breaker size is not stated and the prompt says to always ask for it for a single circuit. Corrected in task 37 (user decision 2026-11-16): was blocks three_way_lights x1 with no breaker graded; now a question.',
   },
   {
     id: 'template-gfci-1',
@@ -81,10 +114,10 @@ export const CASES: EvalCase[] = [
     steps: [
       {
         user: 'Next to my bathroom sink I want a GFCI receptacle, and one ordinary outlet on the same wall that is protected through it.',
-        expect: { kind: 'blocks', blocks: GF },
+        expect: { kind: 'question' },
       },
     ],
-    rationale: 'A GFCI receptacle with exactly one standard receptacle downstream: GFCI template applies; breaker size not stated.',
+    rationale: 'Breaker size is not stated and the prompt says to always ask for it for a single circuit. Corrected in task 37 (user decision 2026-11-16): was blocks receptacle_run x2 GFCI-first with no breaker graded; now a question.',
   },
   {
     id: 'template-tg-1',
@@ -103,10 +136,10 @@ export const CASES: EvalCase[] = [
     steps: [
       {
         user: 'My bedroom has two switches side by side in one double box. The left one turns on the ceiling light and the right one turns on a closet light, each light on its own cable. The power cable comes into the double box.',
-        expect: { kind: 'blocks', blocks: TG },
+        expect: { kind: 'question' },
       },
     ],
-    rationale: 'Two switches in one 2-gang box, each controlling a separate light, power at the switch box: 2-gang template applies.',
+    rationale: 'Breaker size is not stated and the prompt says to always ask for it for a single circuit. Corrected in task 37 (user decision 2026-11-16): was blocks two_gang_switches A1/B1 with no breaker graded; now a question.',
   },
 
   // ---- question (4): a fact a template depends on is missing
@@ -346,10 +379,10 @@ export const CASES: EvalCase[] = [
     steps: [
       {
         user: 'I need a dedicated 20 amp circuit for the dishwasher in the kitchen: one single regular receptacle (not GFCI), fed straight from the panel.',
-        expect: { kind: 'blocks', blocks: [{ type: 'receptacle_run', count: 1, gfciFirst: false }], breakerAmps: 20 },
+        expect: { kind: 'blocks', blocks: [{ type: 'receptacle_run', count: 1 }], breakerAmps: 20 },
       },
     ],
-    rationale: 'receptacle_run count 1 without GFCI covers a single standard receptacle on its own circuit; 20 A. The text says "not GFCI" so the flag is not a code judgement.',
+    rationale: 'receptacle_run count 1 covers a single receptacle on its own circuit; 20 A. Corrected in task 37 (user decision 2026-11-16): was graded receptacle_run x1 with gfciFirst false; now the GFCI flag is not graded (a dishwasher receptacle may need GFCI under the code, so the case does not judge it).',
   },
 
   // ---- counts (4): the only thing to get right is a number or flag
@@ -534,5 +567,217 @@ export const CASES: EvalCase[] = [
       },
     ],
     rationale: 'Single-pole switch block is not for power arriving at the light box first (switch loop).',
+  },
+
+  // ---- inventory (6): a whole job in, a room inventory out (task 37). The model lists; the split is deterministic and not graded here.
+  {
+    id: 'inv-1',
+    category: 'inventory',
+    steps: [{ user: BASEMENT_TEXT, expect: { kind: 'inventory', inventory: BASEMENT_EXPECT } }],
+    rationale: 'Several rooms and "plan the circuits": the prompt says to reply inventory; the space is stated to be a basement, the living lights have two switch locations, the closet is not stated to belong to the bedroom.',
+  },
+  {
+    id: 'inv-2',
+    category: 'inventory',
+    steps: [
+      {
+        user: 'Plan the circuits for the upstairs of my house (not a basement): two bedrooms and the hallway between them. Bedroom 1 has 6 outlets and 1 ceiling light on one switch. Bedroom 2 has 5 outlets and 1 ceiling light on one switch. The hallway has 1 outlet and 2 ceiling lights on one switch.',
+        expect: {
+          kind: 'inventory',
+          inventory: {
+            basement: false,
+            rooms: [
+              room('bedroom', 6, [[1, 1]]),
+              room('bedroom', 5, [[1, 1]]),
+              room('hallway', 1, [[2, 1]]),
+            ],
+          },
+        },
+      },
+    ],
+    rationale: 'Several rooms and "plan the circuits": inventory; the text says it is not a basement; each room is listed once with its stated counts.',
+  },
+  {
+    id: 'inv-3',
+    category: 'inventory',
+    steps: [
+      {
+        user: 'Plan the circuits for two bathrooms on the second floor (not a basement). The master bathroom has 2 outlets, 1 light on one switch and 1 exhaust fan. The hall bathroom has 1 outlet, 1 light on one switch and no fan.',
+        expect: {
+          kind: 'inventory',
+          inventory: { basement: false, rooms: [room('bathroom', 2, [[1, 1]], 1), room('bathroom', 1, [[1, 1]])] },
+        },
+      },
+    ],
+    rationale: 'Two rooms of the same type must both appear, each with its own counts; the prompt says every room is listed once.',
+  },
+  {
+    id: 'inv-4',
+    category: 'inventory',
+    steps: [
+      {
+        user: 'Plan the circuits for my living room on the main floor (not a basement): 6 outlets, 4 recessed ceiling lights on one switch by the door, and 2 wall sconces on their own separate switch, also by the door.',
+        expect: { kind: 'inventory', inventory: { basement: false, rooms: [room('living_area', 6, [[4, 1], [2, 1]])] } },
+      },
+    ],
+    rationale: 'The prompt says lightGroups has one entry per set of lights switched together: two separately switched sets are two groups.',
+  },
+  {
+    id: 'inv-5',
+    category: 'inventory',
+    steps: [
+      {
+        user: 'Plan the circuits for the main floor of my house (not a basement): a living room with 6 outlets and 4 ceiling lights on one switch, and a garage with 4 outlets and 2 ceiling lights on one switch.',
+        expect: { kind: 'inventory', inventory: { basement: false, rooms: [room('living_area', 6, [[4, 1]]), room('other', 4, [[2, 1]])] } },
+      },
+    ],
+    rationale: 'The prompt says to use type "other" for a room outside the list; a garage is not in the list and the room must not be dropped.',
+  },
+  {
+    id: 'inv-6',
+    category: 'inventory',
+    steps: [
+      {
+        user: 'Plan the circuits for the upstairs (not a basement): a bedroom with 4 outlets and 1 ceiling light on one switch, and the walk-in closet that is part of that bedroom, with 1 light on its own switch.',
+        expect: { kind: 'inventory', inventory: { basement: false, rooms: [room('bedroom', 4, [[1, 1]]), room('closet', 0, [[1, 1]], 0, 'bedroom')] } },
+      },
+    ],
+    rationale: 'The prompt says to set attachedTo when the user says a room is part of another: the closet is stated to belong to the bedroom.',
+  },
+
+  // ---- inventory-question (3): a fact the inventory depends on cannot be determined, so the model must ask and give no inventory
+  {
+    id: 'invq-1',
+    category: 'inventory-question',
+    steps: [
+      {
+        user: 'Plan the circuits for the main floor (not a basement): a bedroom with some outlets and 1 ceiling light on one switch, and a hallway with 1 outlet and 2 ceiling lights on one switch.',
+        expect: { kind: 'question' },
+      },
+    ],
+    rationale: 'The prompt says to ask when a count cannot be determined and never to guess a number; "some outlets" gives no number.',
+  },
+  {
+    id: 'invq-2',
+    category: 'inventory-question',
+    steps: [
+      {
+        user: 'Plan the circuits for a bedroom with 4 outlets and 1 ceiling light on one switch, and a bathroom with 2 outlets, 1 light on one switch and 1 fan. I have not decided yet whether this goes in the basement or on the ground floor.',
+        expect: { kind: 'question' },
+      },
+    ],
+    rationale: 'The prompt says to ask when it cannot be determined whether the space is a basement; the text says it is undecided.',
+  },
+  {
+    id: 'invq-3',
+    category: 'inventory-question',
+    steps: [
+      {
+        user: 'Plan the circuits for the main floor (not a basement): a living room with 6 outlets and 4 recessed lights, which I may switch from one end or from both ends, I have not decided, and a bedroom with 4 outlets and 1 ceiling light on one switch.',
+        expect: { kind: 'question' },
+      },
+    ],
+    rationale: 'The prompt says to ask when the number of switch locations for a light group cannot be determined; the text says it is undecided.',
+  },
+
+  // ---- plan-edit (4): a stored inventory is seeded; the reply must be the complete revised inventory, not a delta or a circuit
+  {
+    id: 'edit-1',
+    category: 'plan-edit',
+    seed: { circuits: [], selected: null, plan: { inventory: EDIT_SEED } },
+    steps: [
+      {
+        user: 'The closet is part of the bedroom. Put it with the bedroom.',
+        expect: { kind: 'inventory', edit: true, inventory: editExpect((r) => (r.type === 'closet' ? { ...r, attachedToType: 'bedroom' } : r)) },
+      },
+    ],
+    rationale: 'The prompt says to attach a closet to a bedroom by replying a complete revised inventory with attachedTo set; all other rooms unchanged.',
+  },
+  {
+    id: 'edit-2',
+    category: 'plan-edit',
+    seed: { circuits: [], selected: null, plan: { inventory: EDIT_SEED } },
+    steps: [
+      {
+        user: 'Add two more outlets to the hallway.',
+        expect: { kind: 'inventory', edit: true, inventory: editExpect((r) => (r.type === 'hallway' ? { ...r, receptacles: r.receptacles + 2 } : r)) },
+      },
+    ],
+    rationale: 'The prompt says a count change is a complete revised inventory: the hallway goes from 1 to 3 receptacles, everything else as stored.',
+  },
+  {
+    id: 'edit-3',
+    category: 'plan-edit',
+    seed: { circuits: [], selected: null, plan: { inventory: EDIT_SEED } },
+    steps: [
+      {
+        user: 'Use at most 6 outlets per circuit.',
+        expect: { kind: 'inventory', edit: true, inventory: editExpect((r) => r), options: { maxReceptaclesPerCircuit: 6 } },
+      },
+    ],
+    rationale: 'The prompt lists a receptacle limit as a plan change: complete inventory unchanged, maxReceptaclesPerCircuit 6.',
+  },
+  {
+    id: 'edit-4',
+    category: 'plan-edit',
+    seed: { circuits: [], selected: null, plan: { inventory: EDIT_SEED } },
+    steps: [
+      {
+        user: 'Remove the closet, I am not doing that room any more.',
+        expect: { kind: 'inventory', edit: true, inventory: { basement: false, rooms: editExpect((r) => r).rooms.filter((r) => r.type !== 'closet') } },
+      },
+    ],
+    rationale: 'The prompt lists removing a room as a plan change: the complete inventory without the closet.',
+  },
+
+  // ---- build (3): "build it" is only valid when a stored plan is shown as not built
+  {
+    id: 'build-1',
+    category: 'build',
+    seed: { circuits: [], selected: null, plan: { inventory: EDIT_SEED } },
+    steps: [{ user: 'Looks good, build it.', expect: { kind: 'build' } }],
+    rationale: 'The prompt says to reply build when a plan is shown as not built and the user clearly asks to build it.',
+  },
+  {
+    id: 'build-2',
+    category: 'build',
+    steps: [{ user: 'Looks good, build it.', expect: { kind: 'not_build' } }],
+    rationale: 'The prompt says never to use build when no plan is shown; with nothing to build the model has to ask or explain.',
+  },
+  {
+    id: 'build-3',
+    category: 'build',
+    seed: { circuits: [], selected: null, plan: { inventory: EDIT_SEED } },
+    steps: [
+      {
+        user: 'Separately from the plan, I want one more circuit in the workshop: a row of 4 ordinary receptacles on a 20 amp breaker, fed from the panel. No GFCI, no switches.',
+        expect: { kind: 'blocks', blocks: [{ type: 'receptacle_run', count: 4, gfciFirst: false }], breakerAmps: 20, target: 'new' },
+      },
+    ],
+    rationale: 'A single specific circuit with a stated breaker size is a circuit reply even when a plan is stored, and with no circuit selected it is a new circuit.',
+  },
+
+  // ---- routing (2): one request, the right reply kind
+  {
+    id: 'route-1',
+    category: 'routing',
+    steps: [
+      {
+        user: 'In the hallway I want 4 ceiling lights controlled by one wall switch. The power cable from the 15 amp breaker comes into the switch box first.',
+        expect: { kind: 'blocks', blocks: [{ type: 'switch_lights', count: 4 }], breakerAmps: 15 },
+      },
+    ],
+    rationale: 'One specific circuit with a stated breaker size: the prompt says to use the circuit kinds, not an inventory.',
+  },
+  {
+    id: 'route-2',
+    category: 'routing',
+    steps: [
+      {
+        user: 'Plan the circuits for my bedroom upstairs (not a basement): 5 outlets and 2 ceiling lights on one switch.',
+        expect: { kind: 'inventory', inventory: { basement: false, rooms: [room('bedroom', 5, [[2, 1]])] } },
+      },
+    ],
+    rationale: 'The prompt says to reply inventory when the user asks to plan the circuits, even for one room.',
   },
 ];

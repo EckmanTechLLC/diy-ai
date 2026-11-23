@@ -13,7 +13,7 @@ import { createClaudeProvider, DEFAULT_CLAUDE_MODEL, type ClaudeClient } from '.
 import { createLocalProvider } from '../src/llm/local';
 import type { CompleteInput, CompleteResult, LlmProvider } from '../src/llm/types';
 import { CASES, type EvalCase } from './cases';
-import { describe, gradeOutcome } from './grader';
+import { describe, gradeOutcome, summariseInventory } from './grader';
 import { seedContext } from './seed';
 
 export interface CallRecord {
@@ -40,6 +40,12 @@ export interface StepResult {
   customSummary: Record<string, number> | null;
   /** Rule warnings on an accepted circuit; null for other outcomes. */
   warnings: unknown[] | null;
+  /** Rooms, basement flag and options of an inventory outcome (names kept for reading only); null otherwise. */
+  inventory: ReturnType<typeof summariseInventory> | null;
+  /** Model calls beyond the first (retries after an invalid or rule-failing reply). */
+  retries: number;
+  /** Calls whose reply the provider flagged as unreadable or off-schema (hosted Claude only). */
+  malformedRetries: number;
   /** Error code of the first provider error among the calls; null when none. */
   providerError: string | null;
   failureCode: string | null;
@@ -154,7 +160,7 @@ async function runCase(c: EvalCase, rec: ReturnType<typeof recording>): Promise<
     const s0 = Date.now();
     let outcome: ChatOutcome;
     try {
-      outcome = await runChat(rec.provider, { messages: stored, circuits, selectedCircuitId: seeded ? seeded.selectedCircuitId : (circuits[0]?.id ?? null) });
+      outcome = await runChat(rec.provider, { messages: stored, circuits, selectedCircuitId: seeded ? seeded.selectedCircuitId : (circuits[0]?.id ?? null), plan: seeded?.plan ?? null });
     } catch (err) {
       outcome = { kind: 'failed', code: 'server_error', text: `exception: ${(err as Error).message}` };
     }
@@ -178,6 +184,9 @@ async function runCase(c: EvalCase, rec: ReturnType<typeof recording>): Promise<
       }) : null,
       customSummary: circuitOutcome?.origin.kind === 'custom' ? counts : null,
       warnings: circuitOutcome ? circuitOutcome.findings : null,
+      inventory: outcome.kind === 'inventory' ? summariseInventory(outcome.inventory, outcome.options) : null,
+      retries: Math.max(0, calls.length - 1),
+      malformedRetries: calls.filter((x) => x.malformed?.length).length,
       providerError: calls.find((x) => x.errorCode)?.errorCode ?? null,
       failureCode: outcome.kind === 'failed' ? outcome.code : null,
       findings: outcome.kind === 'failed' ? (outcome.findings ?? null) : null,
@@ -209,6 +218,8 @@ function markdown(label: string, started: string, results: CaseResult[], total: 
     `Overall: ${pct(results.filter((r) => r.pass).length, results.length)}`,
     '',
     ...cats.map((c) => `- ${c}: ${pct(results.filter((r) => r.category === c && r.pass).length, results.filter((r) => r.category === c).length)}`),
+    '',
+    `Retries ${results.reduce((n, r) => n + r.steps.reduce((m, st) => m + st.retries, 0), 0)}; malformed replies ${results.reduce((n, r) => n + r.steps.reduce((m, st) => m + st.malformedRetries, 0), 0)}; provider errors ${results.reduce((n, r) => n + r.steps.filter((st) => st.providerError).length, 0)}.`,
     '',
     `Model calls: ${lat.length}; avg ${lat.length ? Math.round(lat.reduce((a, b) => a + b, 0) / lat.length) : 0} ms, max ${lat.length ? Math.max(...lat) : 0} ms.`,
     `HTTP requests sent: ${requestLog.length} (${[...new Set(requestLog.map((r) => r.url))].join(', ')}).`,
