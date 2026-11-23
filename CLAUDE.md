@@ -99,7 +99,7 @@ _(Add corrections and recurring mistakes here as they occur)_
 2. **Reply-schema changes must be proven against every provider (2026-11-16).** Task 22's block-based reply schema was only tested with stubs; Claude's API rejects it ("compiled grammar is too large"). Any task that changes `packages/core/src/reply.ts` must include a real smoke request to each configured provider, or be followed immediately by a task that does.
 
 ## Known Issues
-- **Claude is broken in the app (since task 22).** The reply schema is too large for Claude structured outputs. User decision 2026-11-16: leave it for now; local models work. Likely fix when wanted: drop the per-block label fields and trim the custom-circuit section, verified with real requests.
+- **Claude reply-schema size (fixed 2026-11-23, task 27).** Claude rejected the schema as "compiled grammar is too large" when the endpoint sub-schema was inlined twice; it is now defined once under `$defs` (lossless). The schema sits close to Claude's limit: any addition to `reply.ts` can re-break it (see Lessons Learned 2). Claude v3 test set: 39/43.
 - **Eval cases to correct before the next run** (user decision 2026-11-16: the model always asks for the breaker size when it is not stated): `template-sp-2`, `template-3w-2`, `template-gfci-2`, `template-tg-2` should expect a question; `mb-6` (dishwasher) should not say "not GFCI" and should not grade the GFCI flag.
 
 ## Current Decisions (quick reference)

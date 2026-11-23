@@ -35,7 +35,11 @@ export const LABEL_FIELDS: [string, ...string[]] = (() => {
   return names as [string, ...string[]];
 })();
 
-/** Flat endpoint: `kind` picks which of the other fields apply; the rest are "" and ignored. */
+/**
+ * Flat endpoint: `kind` picks which of the other fields apply; the rest are "" and ignored.
+ * The `id` meta makes the generated JSON Schema define it once under $defs and reference it from both connection ends
+ * (inlined twice, the schema exceeds Claude's structured-output grammar limit: task 27).
+ */
 export const ReplyEndpointSchema = z.strictObject({
   kind: z.enum(['terminal', 'conductor', 'splice']),
   device: Str.describe('terminal endpoints: device id; otherwise "".'),
@@ -44,7 +48,7 @@ export const ReplyEndpointSchema = z.strictObject({
   color: z.enum(['', ...WIRE_COLORS]).describe('conductor endpoints: conductor colour; otherwise "".'),
   box: Str.describe('conductor endpoints: box id where this end of the cable is; otherwise "".'),
   splice: Str.describe('splice endpoints: splice id; otherwise "".'),
-});
+}).meta({ id: 'ReplyEndpoint' });
 
 /** Wire form of CircuitModel: same fields, but ids are plain strings, a device's amps is a number (0 = not a breaker) and endpoints are flat. */
 export const ReplyCircuitSchema = z.strictObject({

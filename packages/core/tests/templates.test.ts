@@ -188,11 +188,13 @@ describe('reply schema', () => {
   });
 
   describe('generated JSON Schema satisfies the provider-neutral constraints', () => {
-    const FORBIDDEN = ['minimum', 'maximum', 'exclusiveMinimum', 'exclusiveMaximum', 'multipleOf', 'minLength', 'maxLength', 'pattern', 'maxItems', 'format', 'uniqueItems', '$ref', '$defs', 'definitions', 'oneOf', 'allOf', 'not', 'if', 'then', 'else'];
+    const FORBIDDEN = ['minimum', 'maximum', 'exclusiveMinimum', 'exclusiveMaximum', 'multipleOf', 'minLength', 'maxLength', 'pattern', 'maxItems', 'format', 'uniqueItems', 'definitions', 'oneOf', 'allOf', 'not', 'if', 'then', 'else'];
     const schema = replyJsonSchema();
     const visit = (node: unknown, path: string, out: { path: string; node: Record<string, unknown> }[]) => {
       if (Array.isArray(node)) node.forEach((n, i) => visit(n, `${path}[${i}]`, out));
       else if (node && typeof node === 'object') {
+        const ref = (node as Record<string, unknown>).$ref;
+        if (typeof ref === 'string') return visit((schema.$defs as Record<string, unknown>)[ref.replace('#/$defs/', '')], `${path}->${ref}`, out);
         out.push({ path, node: node as Record<string, unknown> });
         for (const [k, v] of Object.entries(node)) if (['properties'].includes(k)) for (const [pk, pv] of Object.entries(v as object)) visit(pv, `${path}.${pk}`, out);
         else if (['items', 'anyOf'].includes(k)) visit(v, `${path}.${k}`, out);
@@ -217,6 +219,13 @@ describe('reply schema', () => {
       const text = JSON.stringify(schema);
       for (const key of FORBIDDEN) expect(text.includes(`"${key}":`), key).toBe(false);
       for (const { path, node } of nodes) for (const key of FORBIDDEN) expect(key in node, `${path}.${key}`).toBe(false);
+    });
+    it('defines the endpoint once under $defs and references it from both connection ends (Claude grammar size)', () => {
+      const text = JSON.stringify(schema);
+      expect(Object.keys(schema.$defs as object)).toEqual(['ReplyEndpoint']);
+      expect(text.match(/"\$ref":"#\/\$defs\/ReplyEndpoint"/g)).toHaveLength(2);
+      expect(text.match(/"terminal endpoints: device id/g)).toHaveLength(1);
+      expect(text.match(/"\$ref":/g)).toHaveLength(2);
     });
     it('minItems, if present, is at most 1', () => {
       for (const { path, node } of nodes) if ('minItems' in node) expect(node.minItems as number, path).toBeLessThanOrEqual(1);
