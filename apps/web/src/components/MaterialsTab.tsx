@@ -9,7 +9,7 @@ import { parseAllowance, parseFeet, planOptionsFor, withAllowance, withLength } 
 import { UNVERIFIED_LABEL } from '@/lib/origin';
 import { cn } from '@/lib/utils';
 
-const GROUPS: { title: string; categories: MaterialCategory[] }[] = [
+export const GROUPS: { title: string; categories: MaterialCategory[] }[] = [
   { title: 'Breaker', categories: ['breaker'] },
   { title: 'Devices', categories: ['device'] },
   { title: 'Boxes', categories: ['box'] },

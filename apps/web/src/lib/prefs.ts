@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { ALL_PARTS, parsePrintParts, type PrintPart, type PrintParts } from '@/lib/printdoc';
 
 const KEY = 'diy-ai.chat-sidebar';
 export const SIDEBAR_MIN = 300;
@@ -68,4 +69,26 @@ export function useChecksPanelOpen() {
     }
   }, [open]);
   return [open, setOpen] as const;
+}
+
+const PRINT_KEY = 'diy-ai.print-parts';
+
+/** Which parts of the build-plan document are included, remembered per browser (layout only). All on by default. */
+export function usePrintParts() {
+  const [parts, setParts] = useState<PrintParts>(() => {
+    try {
+      return parsePrintParts(localStorage.getItem(PRINT_KEY));
+    } catch {
+      return { ...ALL_PARTS };
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem(PRINT_KEY, JSON.stringify(parts));
+    } catch {
+      // storage unavailable: the preference just lasts for this visit
+    }
+  }, [parts]);
+  const toggle = useCallback((part: PrintPart) => setParts((p) => ({ ...p, [part]: !p[part] })), []);
+  return [parts, toggle] as const;
 }

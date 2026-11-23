@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { CircuitModel } from '@diy-ai/core';
-import { useParams, useSearchParams } from 'react-router';
-import { Pencil, Trash2, CircuitBoard, MessageSquare } from 'lucide-react';
+import { Link, useParams, useSearchParams } from 'react-router';
+import { Pencil, Trash2, CircuitBoard, MessageSquare, Printer } from 'lucide-react';
 import { useProject } from '@/api/hooks';
 import { ChatSidebar } from '@/components/chat/ChatSidebar';
 import { CircuitList } from '@/components/CircuitList';
@@ -132,6 +132,13 @@ export function ProjectPage() {
   const p = project.data;
   const actions = (
     <div className="flex shrink-0 gap-2">
+      {p.circuits.length > 0 && (
+        <Button asChild variant="outline" size="sm">
+          <Link to={`/projects/${p.id}/print`} aria-label="Build plan: print or save as PDF">
+            <Printer /> <span className="max-sm:sr-only">Build plan</span>
+          </Link>
+        </Button>
+      )}
       <Button variant="outline" size="sm" onClick={() => setEditOpen(true)} aria-label="Edit project">
         <Pencil /> <span className="max-sm:sr-only">Edit</span>
       </Button>
