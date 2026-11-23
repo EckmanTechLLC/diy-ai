@@ -2,7 +2,7 @@
 import { randomUUID } from 'node:crypto';
 import { and, eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
-import { checkCircuit, validateCircuit, type CircuitModel, type CircuitOrigin, type Finding } from '@diy-ai/core';
+import { checkCircuit, planCircuits, validateCircuit, type CircuitModel, type CircuitOrigin, type CircuitPlanInfo, type Finding, type Plan } from '@diy-ai/core';
 import type { Db } from './db';
 import { circuits, projects, type CircuitRow, type ProjectRow } from './schema';
 
@@ -20,16 +20,31 @@ export const circuitToApi = (row: CircuitRow) => ({
   circuit: row.circuit,
   origin: row.origin,
   findings: row.findings ?? [],
+  plan: row.plan ?? null,
   updatedAt: row.updatedAt,
 });
 
-type ProjectBase = Pick<ProjectRow, 'id' | 'name' | 'description' | 'createdAt' | 'updatedAt'>;
+type ProjectBase = Pick<ProjectRow, 'id' | 'name' | 'description' | 'createdAt' | 'updatedAt' | 'inventory' | 'planOptions' | 'planBuiltAt'>;
+
+/** The plan of a project: always computed by `planCircuits` from the stored inventory, never stored. Null without an inventory. */
+export function computePlan(row: Pick<ProjectRow, 'inventory' | 'planOptions'>): Plan | null {
+  if (!row.inventory) return null;
+  try {
+    return planCircuits(row.inventory, row.planOptions ?? {});
+  } catch {
+    return null;
+  }
+}
 
 export const projectToApi = (row: ProjectBase, circuitRows: CircuitRow[]) => ({
   id: row.id,
   name: row.name,
   description: row.description,
   circuits: circuitRows.map(circuitToApi),
+  inventory: row.inventory ?? null,
+  planOptions: row.inventory ? (row.planOptions ?? {}) : null,
+  plan: computePlan(row),
+  planBuiltAt: row.planBuiltAt ?? null,
   createdAt: row.createdAt,
   updatedAt: row.updatedAt,
 });
@@ -67,7 +82,7 @@ export function checkSupplied(raw: unknown): Checked {
 export function appendCircuit(
   db: DbOrTx,
   projectId: string,
-  input: { name?: string; circuit: CircuitModel; origin: CircuitOrigin | null; findings: Finding[] },
+  input: { name?: string; circuit: CircuitModel; origin: CircuitOrigin | null; findings: Finding[]; plan?: CircuitPlanInfo | null },
   now = Date.now(),
 ): CircuitRow {
   const existing = listCircuits(db, projectId);
@@ -81,6 +96,7 @@ export function appendCircuit(
       circuit: input.circuit,
       origin: input.origin,
       findings: input.findings,
+      plan: input.plan ?? null,
       createdAt: now,
       updatedAt: now,
     })

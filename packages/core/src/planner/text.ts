@@ -17,7 +17,7 @@ function protection(c: PlannedCircuit): string {
   return `${gfci}; ${c.protection.afci ? 'AFCI breaker' : 'no AFCI'}`;
 }
 
-export const PLAN_TEXT_CLOSING = 'Building this plan from the chat is not available yet.';
+export const PLAN_TEXT_CLOSING = 'Ask me to change anything in this plan, or say "build it" to create these circuits.';
 
 /** Circuit names, breaker sizes, what each serves, protection, reasons, findings, reminders and rooms not covered. */
 export function formatPlanText(plan: Plan): string {

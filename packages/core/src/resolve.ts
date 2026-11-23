@@ -37,6 +37,8 @@ export type Resolution =
   | { kind: 'circuit'; circuit: CircuitModel; origin: CircuitOrigin; message: string; /** Add a new circuit, or replace the selected one. */ target: Exclude<ReplyTarget, 'none'> }
   /** A whole-job inventory and the deterministic plan made from it (ADR-009). Creates no circuit. */
   | { kind: 'inventory'; inventory: Inventory; options: PlanOptions; plan: Plan; message: string }
+  /** The user asks to build the stored plan (ADR-009). Carries no data: the plan is the one stored on the project. */
+  | { kind: 'build'; message: string }
   | { kind: 'invalid'; issues: ReplyIssue[] };
 
 const invalid = (code: ReplyIssueCode, message: string, ids: string[] = []): Resolution => ({
@@ -63,6 +65,8 @@ export function resolveReply(reply: unknown): Resolution {
       return resolveBlocks(reply, reply.target as 'new' | 'selected');
     case 'inventory':
       return resolveInventory(reply);
+    case 'build':
+      return typeof message === 'string' ? { kind: 'build', message } : invalid('BAD_REPLY', 'a build reply needs message (string)');
     default:
       return resolveCustom(reply, reply.target as 'new' | 'selected');
   }

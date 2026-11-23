@@ -43,13 +43,13 @@ const createProject = async () => (await call('POST', '/api/projects', { name: '
 const post = (id: string, content: string) => call('POST', `/api/projects/${id}/messages`, { content });
 
 describe('inventory outcome', () => {
-  it('valid inventory: plan text stored as a plain assistant message, no circuit created', async () => {
+  it('valid inventory: plan text stored as a plan message, no circuit created', async () => {
     const p = await createProject();
     const s = scripted(ok(inventory([room(), room({ id: 'bath', name: 'Bathroom', type: 'bathroom', receptacles: 3, lightGroups: [{ lights: 1, switchLocations: 1 }], fans: 1 })])));
     use(s.provider);
     const body: any = await (await post(p.id, 'finish my basement')).json();
     expect(s.calls).toHaveLength(1);
-    expect(body.assistantMessage.kind).toBe('question');
+    expect(body.assistantMessage.kind).toBe('plan');
     expect(body.assistantMessage.content).toContain('Here is what I listed.');
     expect(body.assistantMessage.content).toContain('Bathroom');
     expect(body.assistantMessage.content).toContain('20 A breaker');

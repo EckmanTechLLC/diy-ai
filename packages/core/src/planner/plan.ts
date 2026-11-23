@@ -53,6 +53,9 @@ export interface PlannedCircuit {
   reasons: Reason[];
 }
 
+/** The part of a planned circuit that the circuit model cannot hold; stored with a circuit built from a plan. */
+export type CircuitPlanInfo = Pick<PlannedCircuit, 'protection' | 'rooms' | 'reasons' | 'plannedLoadVa' | 'capacityVa'>;
+
 export interface PlanFinding {
   ruleId: string;
   severity: Severity;

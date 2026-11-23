@@ -1,7 +1,7 @@
 import { RULES, type Finding } from '@diy-ai/core';
 import type { ProviderErrorCode } from '../llm';
 
-export type ChatFailureCode = ProviderErrorCode | 'not_configured' | 'endpoint_missing' | 'invalid_reply' | 'rules_failed' | 'block_rule_bug';
+export type ChatFailureCode = ProviderErrorCode | 'not_configured' | 'endpoint_missing' | 'invalid_reply' | 'rules_failed' | 'block_rule_bug' | 'plan_build_failed';
 
 /** The one place provider and loop failures become text the user sees; each says what they can do. */
 export const FAILURE_MESSAGES: Record<ChatFailureCode, string> = {
@@ -22,6 +22,7 @@ export const FAILURE_MESSAGES: Record<ChatFailureCode, string> = {
     'The wiring was not applied because it failed the electrical checks, and your project is unchanged. Rephrase the request with more detail, or pick another model in Settings.',
   block_rule_bug:
     'The wiring blocks produced a circuit that fails our own electrical checks. This is a bug in the blocks, not in your request, and your project is unchanged.',
+  plan_build_failed: 'The plan could not be built. This is a bug in the planner, not in your request, and your project is unchanged.',
 };
 
 const ruleTitle = (ruleId: string) => RULES.find((r) => r.id === ruleId)?.title ?? ruleId;
@@ -32,5 +33,14 @@ export function rulesFailedText(findings: readonly Finding[]): string {
   return (
     `The wiring was not applied because it failed these electrical checks: ${titles.join('; ')}. ` +
     'Your project is unchanged. Rephrase the request with more detail, or pick another model in Settings.'
+  );
+}
+
+/** User-facing text for a `plan_build_failed` outcome: names the circuit and the failed rules; nothing was stored. */
+export function planBuildFailedText(circuitName: string, problem: string, findings: readonly Finding[]): string {
+  const titles = [...new Set(findings.map((f) => ruleTitle(f.ruleId)))];
+  return (
+    `The plan was not built: circuit "${circuitName}" was rejected because ${problem}${titles.length ? `: ${titles.join('; ')}` : ''}. ` +
+    'This is a bug in the planner, not in your request. No circuits were created and your project is unchanged.'
   );
 }

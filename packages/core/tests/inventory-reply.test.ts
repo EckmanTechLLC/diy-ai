@@ -89,6 +89,7 @@ describe('formatPlanText', () => {
     for (const r of plan.reminders) expect(text).toContain(r);
     for (const c of plan.circuits) for (const reason of c.reasons) expect(text).toContain(reason.text);
     expect(text.endsWith(PLAN_TEXT_CLOSING)).toBe(true);
+    expect(text).not.toContain('not available yet');
     expect(formatPlanText(plan)).toBe(text);
   });
 });
@@ -102,5 +103,27 @@ describe('prompt: inventory section', () => {
   it('stays deterministic and provider-neutral', () => {
     expect(buildSystemPrompt()).toBe(p);
     expect(p).not.toMatch(/claude|anthropic|openai|llama|gpt|qwen|gemini/i);
+  });
+});
+
+describe('build reply kind', () => {
+  const build = (over: Record<string, unknown> = {}) => ({ ...base, kind: 'build', message: 'Building it.', ...over });
+  it('is a reply kind, parses against ReplySchema and resolves to a build result carrying the message', () => {
+    expect(REPLY_KINDS).toContain('build');
+    expect(ReplySchema.safeParse(build()).success).toBe(true);
+    expect(resolveReply(build())).toEqual({ kind: 'build', message: 'Building it.' });
+    expect(resolveReply({ kind: 'build', message: 'ok' })).toEqual({ kind: 'build', message: 'ok' }); // omitted fields count as unused
+  });
+  it('every other field must be unused', () => {
+    expect(replyShapeProblem(build())).toBeNull();
+    for (const over of [{ target: 'new' }, { breakerAmps: 15 }, { name: 'x' }, { basement: true }, { rooms: [room()] }, { maxReceptaclesPerCircuit: 4 }, { lightingBreakerAmps: 20 }, { blocks: [{}] }, { custom: [{}] }])
+      expect(resolveReply(build(over)).kind, JSON.stringify(over)).toBe('invalid');
+  });
+  it('the schema has the same properties as before and the prompt explains when to build and that inventories are complete', () => {
+    const schema: any = replyJsonSchema();
+    expect(schema.properties.kind.enum).toContain('build');
+    expect(JSON.stringify(schema)).not.toMatch(/anyOf|oneOf|"type":\[/);
+    const p = buildSystemPrompt();
+    for (const s of ['"build"', 'complete', 'not yet built', 'Never send only the changed room']) expect(p).toContain(s);
   });
 });

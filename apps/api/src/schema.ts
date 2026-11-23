@@ -1,5 +1,11 @@
 import { index, integer, primaryKey, sqliteTable, text } from 'drizzle-orm/sqlite-core';
-import type { CircuitModel, CircuitOrigin, Finding } from '@diy-ai/core';
+import type { CircuitModel, CircuitOrigin, CircuitPlanInfo, Finding, Inventory, Plan, PlanOptions } from '@diy-ai/core';
+
+/** The plan stored with a chat message; `circuitIds` only on a `plan_built` message. */
+export interface MessagePlan {
+  plan: Plan;
+  circuitIds?: string[];
+}
 
 export const projects = sqliteTable(
   'projects',
@@ -10,6 +16,12 @@ export const projects = sqliteTable(
     description: text('description').notNull().default(''),
     createdAt: integer('created_at').notNull(),
     updatedAt: integer('updated_at').notNull(),
+    /** The room inventory of the project's plan (ADR-009); null when there is no plan. The plan itself is always computed from it. */
+    inventory: text('inventory', { mode: 'json' }).$type<Inventory>(),
+    /** The plan options stated with the inventory; null when there is no plan. */
+    planOptions: text('plan_options', { mode: 'json' }).$type<PlanOptions>(),
+    /** When the plan was built into circuits; null while it has not been built. */
+    planBuiltAt: integer('plan_built_at'),
   },
   (t) => [index('projects_owner_id_idx').on(t.ownerId)],
 );
@@ -30,6 +42,8 @@ export const circuits = sqliteTable(
     origin: text('origin', { mode: 'json' }).$type<CircuitOrigin>(),
     /** Rule warnings for the stored circuit (errors never reach storage); null when none were recorded. */
     findings: text('findings', { mode: 'json' }).$type<Finding[]>(),
+    /** What the plan said about this circuit (protection, rooms, reasons); null for circuits not built from a plan. */
+    plan: text('plan', { mode: 'json' }).$type<CircuitPlanInfo>(),
     createdAt: integer('created_at').notNull(),
     updatedAt: integer('updated_at').notNull(),
   },
@@ -47,7 +61,7 @@ export const messages = sqliteTable(
       .references(() => projects.id, { onDelete: 'cascade' }),
     role: text('role', { enum: ['user', 'assistant'] }).notNull(),
     content: text('content').notNull(),
-    kind: text('kind', { enum: ['question', 'circuit', 'unsupported', 'error'] }),
+    kind: text('kind', { enum: ['question', 'circuit', 'unsupported', 'error', 'plan', 'plan_built'] }),
     /** The model's raw structured reply (assistant messages only); never returned by the API. */
     reply: text('reply', { mode: 'json' }).$type<unknown>(),
     /** Where the circuit of a `circuit` message came from; null for other messages and for rows stored before it was recorded. */
@@ -58,6 +72,8 @@ export const messages = sqliteTable(
     errorCode: text('error_code'),
     /** Rule findings: those that caused a rejected attempt (error messages) or the warnings accepted with a circuit; null otherwise. */
     findings: text('findings', { mode: 'json' }).$type<Finding[]>(),
+    /** `plan` messages: `{ plan }`, the plan as shown in the message. `plan_built` messages: `{ plan, circuitIds }`, with the ids of the circuits created. Null otherwise. */
+    plan: text('plan', { mode: 'json' }).$type<MessagePlan>(),
     createdAt: integer('created_at').notNull(),
   },
   (t) => [index('messages_project_id_created_at_idx').on(t.projectId, t.createdAt)],

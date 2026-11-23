@@ -383,7 +383,7 @@ describe('concurrency, validation, scoping', () => {
     await post(p.id, 'two');
     const list = await (await call('GET', `/api/projects/${p.id}/messages`)).json();
     expect(list.map((m: any) => m.content)).toEqual(['one', 'a', 'two', 'b']);
-    for (const m of list) expect(Object.keys(m).sort()).toEqual(['circuitId', 'content', 'createdAt', 'errorCode', 'findings', 'id', 'kind', 'origin', 'role']);
+    for (const m of list) expect(Object.keys(m).sort()).toEqual(['circuitId', 'content', 'createdAt', 'createdCircuitIds', 'errorCode', 'findings', 'id', 'kind', 'origin', 'plan', 'role']);
   });
 
   it('raw reply never appears in any response body', async () => {

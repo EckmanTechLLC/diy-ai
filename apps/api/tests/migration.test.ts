@@ -1,16 +1,31 @@
 // Data migration 0005: a project's single circuit becomes a row of `circuits`. Proven on an in-memory database
 // built from migrations 0-4 and upgraded with the real migrator. Never touches a database file.
-import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import Database from 'better-sqlite3';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
-import { describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it } from 'vitest';
 import { FIXTURES } from '@diy-ai/core/fixtures';
 
 const folder = resolve(dirname(fileURLToPath(import.meta.url)), '../drizzle');
 const journal = JSON.parse(readFileSync(resolve(folder, 'meta/_journal.json'), 'utf8')) as { entries: { tag: string; when: number }[] };
+
+const tmp = mkdtempSync(resolve(tmpdir(), 'diy-ai-mig-'));
+afterAll(() => rmSync(tmp, { recursive: true, force: true }));
+/** A migrations folder holding only the first `n` real migrations (a temporary copy; the real folder is never written). */
+function foldersUpTo(n: number): string {
+  const dir = resolve(tmp, `migrations-${n}`);
+  mkdirSync(resolve(dir, 'meta'), { recursive: true });
+  writeFileSync(resolve(dir, 'meta/_journal.json'), JSON.stringify({ version: '7', dialect: 'sqlite', entries: journalFull.entries.slice(0, n) }));
+  for (const e of journal.entries.slice(0, n)) copyFileSync(resolve(folder, `${e.tag}.sql`), resolve(dir, `${e.tag}.sql`));
+  return dir;
+}
+const journalFull = JSON.parse(readFileSync(resolve(folder, 'meta/_journal.json'), 'utf8'));
+const folder05 = foldersUpTo(6);
 
 /** An in-memory database at the schema of migrations 0-4, with drizzle's bookkeeping saying so. */
 function oldDatabase() {
@@ -81,7 +96,7 @@ describe('migration 0005: circuits table', () => {
     };
     expect(before.projects).toHaveLength(seeds.length);
 
-    migrate(drizzle(sqlite), { migrationsFolder: folder });
+    migrate(drizzle(sqlite), { migrationsFolder: folder05 });
 
     const rows = dump(sqlite, 'SELECT * FROM circuits');
     const withCircuit = seeds.filter((s) => s.circuit !== null);
@@ -141,15 +156,83 @@ describe('migration 0005: circuits table', () => {
 
   it('migrating an old database with no projects, and a fresh database, both end at the same schema', () => {
     const empty = oldDatabase();
-    migrate(drizzle(empty), { migrationsFolder: folder });
+    migrate(drizzle(empty), { migrationsFolder: folder05 });
     const fresh = new Database(':memory:');
-    migrate(drizzle(fresh), { migrationsFolder: folder });
+    migrate(drizzle(fresh), { migrationsFolder: folder05 });
     const shape = (s: Database.Database) => dump(s, "SELECT name, sql FROM sqlite_master WHERE name NOT LIKE '\\_\\_%' ESCAPE '\\' ORDER BY name").map((r) => r.name);
     expect(shape(empty)).toEqual(shape(fresh));
     expect(dump(empty, 'SELECT * FROM circuits')).toEqual([]);
   });
 
   it('migrations 0-4 are the five earlier journal entries, and 0005 is the sixth', () => {
-    expect(journal.entries.map((e) => e.tag.slice(0, 4))).toEqual(['0000', '0001', '0002', '0003', '0004', '0005']);
+    expect(journal.entries.map((e) => e.tag.slice(0, 4)).slice(0, 6)).toEqual(['0000', '0001', '0002', '0003', '0004', '0005']);
+  });
+});
+
+describe('migration 0006: plan storage', () => {
+  const NEW = { projects: ['inventory', 'plan_options', 'plan_built_at'], circuits: ['plan'], messages: ['plan'] };
+
+  /** A database at migrations 0-5 (real migrator on a trimmed copy), seeded through the 0005 schema. */
+  function databaseAt0005() {
+    const sqlite = new Database(':memory:');
+    sqlite.pragma('foreign_keys = ON');
+    migrate(drizzle(sqlite), { migrationsFolder: folder05 });
+    const p = sqlite.prepare('INSERT INTO projects (id, owner_id, name, description, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)');
+    p.run('p1', 'local', 'One', 'notes', 1, 2);
+    p.run('p2', 'someone-else', 'Two', '', 3, 4);
+    p.run('p3', 'local', 'Empty', '', 5, 6);
+    const c = sqlite.prepare('INSERT INTO circuits (id, project_id, name, position, circuit, origin, findings, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
+    c.run('c1', 'p1', 'Basement lights', 0, j(FIXTURES[1]), j({ kind: 'blocks', breakerAmps: 15, name: 'Basement lights', blocks }), j([finding]), 10, 11);
+    c.run('c2', 'p1', 'Second', 1, j(FIXTURES[2]), j({ kind: 'custom', verified: false }), null, 12, 13);
+    c.run('c3', 'p2', 'Theirs', 0, j(FIXTURES[0]), null, null, 14, 15);
+    const m = sqlite.prepare('INSERT INTO messages (id, project_id, role, content, kind, reply, origin, circuit_id, error_code, findings, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+    m.run('m1', 'p1', 'user', 'basement lights', null, null, null, null, null, null, 1);
+    m.run('m2', 'p1', 'assistant', 'Done.', 'circuit', j({ kind: 'circuit' }), j({ kind: 'blocks', breakerAmps: 15, name: 'Basement lights', blocks }), 'c1', null, j([finding]), 2);
+    m.run('m3', 'p2', 'assistant', 'Failed.', 'error', null, null, null, 'rules_failed', j([finding]), 3);
+    return sqlite;
+  }
+
+  it('every existing row is unchanged and the new columns are null', () => {
+    const sqlite = databaseAt0005();
+    const before = { projects: dump(sqlite, 'SELECT * FROM projects ORDER BY id'), circuits: dump(sqlite, 'SELECT * FROM circuits ORDER BY id'), messages: dump(sqlite, 'SELECT * FROM messages ORDER BY id') };
+    expect(before.projects).toHaveLength(3);
+    expect(before.circuits).toHaveLength(3);
+    expect(before.messages).toHaveLength(3);
+
+    migrate(drizzle(sqlite), { migrationsFolder: folder });
+
+    const withNew = (rows: Record<string, unknown>[], cols: string[]) => rows.map((r) => ({ ...r, ...Object.fromEntries(cols.map((c) => [c, null])) }));
+    expect(dump(sqlite, 'SELECT * FROM projects ORDER BY id')).toEqual(withNew(before.projects, NEW.projects));
+    expect(dump(sqlite, 'SELECT * FROM circuits ORDER BY id')).toEqual(withNew(before.circuits, NEW.circuits));
+    expect(dump(sqlite, 'SELECT * FROM messages ORDER BY id')).toEqual(withNew(before.messages, NEW.messages));
+    for (const [table, cols] of Object.entries(NEW)) {
+      const names = dump(sqlite, `PRAGMA table_info(${table})`).map((c) => c.name);
+      for (const col of cols) expect(names, `${table}.${col}`).toContain(col);
+      for (const col of cols) expect(dump(sqlite, `PRAGMA table_info(${table})`).find((c) => c.name === col)!.notnull, `${table}.${col} nullable`).toBe(0);
+    }
+    expect(dump(sqlite, 'PRAGMA foreign_key_check')).toEqual([]);
+    expect(dump(sqlite, 'SELECT COUNT(*) AS n FROM __drizzle_migrations')).toEqual([{ n: 7 }]);
+  });
+
+  it('is purely additive: only ADD COLUMN statements, no drops, no data statements', () => {
+    const sql = readFileSync(resolve(folder, `${journal.entries[6]!.tag}.sql`), 'utf8');
+    const stmts = sql.split('--> statement-breakpoint').map((x) => x.trim()).filter(Boolean);
+    expect(stmts).toHaveLength(5);
+    for (const x of stmts) expect(x).toMatch(/^ALTER TABLE `\w+` ADD `\w+` (text|integer);?$/);
+    expect(sql).not.toMatch(/DROP|INSERT|UPDATE|DELETE/i);
+  });
+
+  it('the seventh journal entry is new and migrations 0-5 are byte-unchanged', () => {
+    expect(journal.entries).toHaveLength(7);
+    expect(journal.entries[6]!.tag.slice(0, 4)).toBe('0006');
+    const sha = (f: string) => createHash('sha256').update(readFileSync(resolve(folder, f))).digest('hex');
+    expect(journal.entries.slice(0, 6).map((e) => sha(`${e.tag}.sql`))).toEqual([
+      '476255ea26ae01e87b1454e3c4be5b7c3d08779a5e7de86b33468beb0df11a3b',
+      '990fb49c5d23d72bbd1c2fbd80d05981ddccde23db3b7714014a38460a139e19',
+      'c52f7225a7a1f44031fc5c0f057352e054c53efaec9d0ff0240e566f6230dcc6',
+      '08b1078dd44bdeaf81066f077c7bebf28be871fa04cc5f9fec54e28b5cb3fefb',
+      '49bdccc0d3d3cd6ee40f06a5a8c8cb9b8486c0e91f1a8b8ef68ab17842addbd8',
+      '965ecaf535438a67dc3cb9ada3aa32323f51943dc0619e17ce9190036e5435e8',
+    ]);
   });
 });

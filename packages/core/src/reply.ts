@@ -1,5 +1,5 @@
 // Provider-neutral reply contract (ADR-006, ADR-008). The model returns one flat object: a `kind` naming the single
-// outcome (question / circuit / custom / inventory / unsupported) plus always-present fields. Fields that do not apply to the
+// outcome (question / circuit / custom / inventory / build / unsupported) plus always-present fields. Fields that do not apply to the
 // chosen kind carry an "unused" value: 0 for breakerAmps / counts / amps, an empty array for blocks and custom, an
 // empty string for unused text and labels, false for gfciFirst, "none" for target. `target` says whether a circuit
 // outcome adds a new circuit to the project or replaces the selected one (ADR-008). A circuit is a breaker size plus an ordered list of
@@ -16,7 +16,7 @@ import { CABLE_TYPES, WIRE_COLORS } from './schema';
 
 const Str = z.string();
 
-export const REPLY_KINDS = ['question', 'circuit', 'custom', 'inventory', 'unsupported'] as const;
+export const REPLY_KINDS = ['question', 'circuit', 'custom', 'inventory', 'build', 'unsupported'] as const;
 /** Where a circuit outcome goes: `new` adds a circuit, `selected` replaces the selected one, `none` for outcomes without a circuit. */
 export const REPLY_TARGETS = ['none', 'new', 'selected'] as const;
 export type ReplyTarget = (typeof REPLY_TARGETS)[number];
@@ -103,7 +103,7 @@ export const ReplySchema = z
     target: z
       .enum(REPLY_TARGETS)
       .describe('kind circuit or custom: "new" to add an additional circuit to the project, "selected" to replace the circuit marked as selected. Every other kind: "none".'),
-    message: Str.describe('question: the clarifying question. unsupported: why the job cannot be done. circuit or custom: a short note to the user.'),
+    message: Str.describe('question: the clarifying question. unsupported: why the job cannot be done. circuit, custom, inventory or build: a short note to the user.'),
     breakerAmps: z.literal([UNUSED_NUMBER, 15, 20]).describe('kind circuit: the breaker size, 15 or 20. Every other kind: 0.'),
     name: Str.describe('kind circuit: a short name for the circuit, such as "Basement lights". Every other kind: "".'),
     blocks: z.array(ReplyBlockSchema).describe('kind circuit: the building blocks in the order power flows from the panel. Every other kind: empty list.'),
