@@ -10,3 +10,4 @@ export * from './analysis';
 export * from './rules';
 export * from './blocks';
 export * from './planner';
+export * from './buildplan';
