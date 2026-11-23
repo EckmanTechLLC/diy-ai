@@ -1,0 +1,155 @@
+// Data migration 0005: a project's single circuit becomes a row of `circuits`. Proven on an in-memory database
+// built from migrations 0-4 and upgraded with the real migrator. Never touches a database file.
+import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import Database from 'better-sqlite3';
+import { drizzle } from 'drizzle-orm/better-sqlite3';
+import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
+import { describe, expect, it } from 'vitest';
+import { FIXTURES } from '@diy-ai/core/fixtures';
+
+const folder = resolve(dirname(fileURLToPath(import.meta.url)), '../drizzle');
+const journal = JSON.parse(readFileSync(resolve(folder, 'meta/_journal.json'), 'utf8')) as { entries: { tag: string; when: number }[] };
+
+/** An in-memory database at the schema of migrations 0-4, with drizzle's bookkeeping saying so. */
+function oldDatabase() {
+  const sqlite = new Database(':memory:');
+  sqlite.pragma('foreign_keys = ON');
+  const old = journal.entries.slice(0, 5);
+  for (const e of old)
+    for (const stmt of readFileSync(resolve(folder, `${e.tag}.sql`), 'utf8').split('--> statement-breakpoint')) sqlite.exec(stmt);
+  sqlite.exec('CREATE TABLE "__drizzle_migrations" (id SERIAL PRIMARY KEY, hash text NOT NULL, created_at numeric)');
+  sqlite.prepare('INSERT INTO "__drizzle_migrations" (hash, created_at) VALUES (?, ?)').run('old', old[4]!.when);
+  return sqlite;
+}
+
+const j = (v: unknown) => JSON.stringify(v);
+const finding = { ruleId: 'wire-colour-role', severity: 'warning', message: 'm', involved: ['a'], citation: { edition: 'nec-2023', section: null, confirmed: false } };
+const blocks = [{ type: 'switch_lights', count: 3, switchLabel: 'Switch', switchBoxLabel: 'Switch box', lightLabel: 'Light', lightBoxLabel: 'Light box' }];
+const titled = (title: string) => ({ ...FIXTURES[1]!, title });
+
+interface Seed {
+  id: string;
+  owner: string;
+  circuit: unknown | null;
+  origin: unknown | null;
+  findings: unknown | null;
+  expectName: string | null; // null: the project has no circuit
+}
+const seeds: Seed[] = [
+  { id: 'p-template', owner: 'local', circuit: FIXTURES[0], origin: { kind: 'template', templateId: 'single_pole_switch', params: { breakerAmps: 15 } }, findings: null, expectName: FIXTURES[0]!.title },
+  { id: 'p-blocks', owner: 'local', circuit: FIXTURES[1], origin: { kind: 'blocks', breakerAmps: 15, name: 'Basement lights', blocks }, findings: [finding], expectName: 'Basement lights' },
+  { id: 'p-custom', owner: 'local', circuit: FIXTURES[2], origin: { kind: 'custom', verified: false }, findings: [], expectName: FIXTURES[2]!.title },
+  { id: 'p-none', owner: 'local', circuit: null, origin: null, findings: null, expectName: null },
+  { id: 'p-example', owner: 'local', circuit: FIXTURES[3], origin: null, findings: null, expectName: FIXTURES[3]!.title },
+  { id: 'p-blank-name', owner: 'local', circuit: titled('Fallback title'), origin: { kind: 'blocks', breakerAmps: 20, name: '  ', blocks }, findings: null, expectName: 'Fallback title' },
+  { id: 'p-no-title', owner: 'local', circuit: titled(''), origin: null, findings: null, expectName: 'Circuit 1' },
+  { id: 'p-long', owner: 'local', circuit: FIXTURES[1], origin: { kind: 'blocks', breakerAmps: 15, name: 'x'.repeat(100), blocks }, findings: null, expectName: 'x'.repeat(80) },
+  { id: 'p-foreign', owner: 'someone-else', circuit: FIXTURES[0], origin: { kind: 'custom', verified: false }, findings: [finding], expectName: FIXTURES[0]!.title },
+];
+
+function seed(sqlite: Database.Database) {
+  const insertProject = sqlite.prepare(
+    'INSERT INTO projects (id, owner_id, name, description, circuit, circuit_origin, circuit_findings, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+  );
+  seeds.forEach((s, i) =>
+    insertProject.run(s.id, s.owner, `Project ${s.id}`, 'notes', s.circuit === null ? null : j(s.circuit), s.origin === null ? null : j(s.origin), s.findings === null ? null : j(s.findings), 100 + i, 200 + i),
+  );
+  const insertMessage = sqlite.prepare(
+    'INSERT INTO messages (id, project_id, role, content, kind, reply, origin, error_code, findings, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+  );
+  insertMessage.run('m1', 'p-blocks', 'user', 'basement lights', null, null, null, null, null, 1);
+  insertMessage.run('m2', 'p-blocks', 'assistant', 'Done.', 'circuit', j({ kind: 'circuit' }), j({ kind: 'blocks', breakerAmps: 15, name: 'Basement lights', blocks }), null, j([finding]), 2);
+  insertMessage.run('m3', 'p-custom', 'assistant', 'Failed.', 'error', null, null, 'rules_failed', j([finding]), 3);
+  insertMessage.run('m4', 'p-none', 'user', 'hello', null, null, null, null, null, 4);
+  sqlite.prepare('INSERT INTO llm_endpoints (id, owner_id, label, base_url, model, created_at) VALUES (?, ?, ?, ?, ?, ?)').run('e1', 'local', 'L', 'http://x', 'm', 5);
+  sqlite.prepare('INSERT INTO settings (owner_id, key, value, updated_at) VALUES (?, ?, ?, ?)').run('local', 'k', 'v', 6);
+}
+
+const dump = (sqlite: Database.Database, sql: string) => sqlite.prepare(sql).all() as Record<string, unknown>[];
+
+describe('migration 0005: circuits table', () => {
+  it('moves every project circuit into circuits, byte-equal, and loses nothing else', () => {
+    const sqlite = oldDatabase();
+    seed(sqlite);
+    const before = {
+      projects: dump(sqlite, 'SELECT * FROM projects ORDER BY id'),
+      messages: dump(sqlite, 'SELECT * FROM messages ORDER BY id'),
+      endpoints: dump(sqlite, 'SELECT * FROM llm_endpoints'),
+      settings: dump(sqlite, 'SELECT * FROM settings'),
+    };
+    expect(before.projects).toHaveLength(seeds.length);
+
+    migrate(drizzle(sqlite), { migrationsFolder: folder });
+
+    const rows = dump(sqlite, 'SELECT * FROM circuits');
+    const withCircuit = seeds.filter((s) => s.circuit !== null);
+    expect(rows).toHaveLength(withCircuit.length);
+    for (const s of seeds) {
+      const mine = rows.filter((r) => r.project_id === s.id);
+      const old = before.projects.find((p) => p.id === s.id)!;
+      if (s.expectName === null) {
+        expect(mine, s.id).toHaveLength(0);
+        continue;
+      }
+      expect(mine, s.id).toHaveLength(1);
+      const r = mine[0]!;
+      expect(r.name, s.id).toBe(s.expectName);
+      expect(r.position).toBe(0);
+      expect(typeof r.id).toBe('string');
+      expect((r.id as string).length).toBeGreaterThan(8);
+      // byte-equal as stored JSON text, and equal as parsed JSON
+      expect(r.circuit, s.id).toBe(old.circuit);
+      expect(JSON.parse(r.circuit as string)).toEqual(s.circuit);
+      expect(r.origin, s.id).toBe(old.circuit_origin);
+      expect(r.findings, s.id).toBe(old.circuit_findings);
+      expect(r.origin === null ? null : JSON.parse(r.origin as string)).toEqual(s.origin);
+      expect(r.findings === null ? null : JSON.parse(r.findings as string)).toEqual(s.findings);
+      expect(r.created_at).toBe(old.created_at);
+      expect(r.updated_at).toBe(old.updated_at);
+    }
+    expect(new Set(rows.map((r) => r.id)).size).toBe(rows.length);
+
+    // the three template / blocks / custom origins are all among the migrated circuits
+    expect(rows.map((r) => (r.origin === null ? 'none' : (JSON.parse(r.origin as string) as { kind: string }).kind)).sort()).toEqual(
+      ['blocks', 'blocks', 'blocks', 'custom', 'custom', 'none', 'none', 'template'].sort(),
+    );
+
+    // projects lose exactly the three circuit columns and keep every other value
+    const cols = dump(sqlite, 'PRAGMA table_info(projects)').map((c) => c.name);
+    expect(cols).toEqual(['id', 'owner_id', 'name', 'description', 'created_at', 'updated_at']);
+    expect(dump(sqlite, 'SELECT * FROM projects ORDER BY id')).toEqual(
+      before.projects.map(({ circuit: _a, circuit_origin: _b, circuit_findings: _c, ...rest }) => rest),
+    );
+
+    // messages intact; only the new circuit_id column (null) is added
+    expect(dump(sqlite, 'SELECT * FROM messages ORDER BY id')).toEqual(before.messages.map((m) => ({ ...m, circuit_id: null })));
+    expect(dump(sqlite, 'SELECT * FROM llm_endpoints')).toEqual(before.endpoints);
+    expect(dump(sqlite, 'SELECT * FROM settings')).toEqual(before.settings);
+
+    // constraints: index present, foreign keys consistent, message circuit_id is set null on delete, circuits cascade with the project
+    expect(dump(sqlite, "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'circuits_project_id_position_idx'")).toHaveLength(1);
+    expect(dump(sqlite, 'PRAGMA foreign_key_check')).toEqual([]);
+    const blocksCircuit = rows.find((r) => r.project_id === 'p-blocks')!.id;
+    sqlite.prepare('UPDATE messages SET circuit_id = ? WHERE id = ?').run(blocksCircuit, 'm2');
+    sqlite.prepare('DELETE FROM circuits WHERE id = ?').run(blocksCircuit);
+    expect(dump(sqlite, "SELECT circuit_id FROM messages WHERE id = 'm2'")).toEqual([{ circuit_id: null }]);
+    sqlite.prepare("DELETE FROM projects WHERE id = 'p-custom'").run();
+    expect(dump(sqlite, "SELECT id FROM circuits WHERE project_id = 'p-custom'")).toEqual([]);
+  });
+
+  it('migrating an old database with no projects, and a fresh database, both end at the same schema', () => {
+    const empty = oldDatabase();
+    migrate(drizzle(empty), { migrationsFolder: folder });
+    const fresh = new Database(':memory:');
+    migrate(drizzle(fresh), { migrationsFolder: folder });
+    const shape = (s: Database.Database) => dump(s, "SELECT name, sql FROM sqlite_master WHERE name NOT LIKE '\\_\\_%' ESCAPE '\\' ORDER BY name").map((r) => r.name);
+    expect(shape(empty)).toEqual(shape(fresh));
+    expect(dump(empty, 'SELECT * FROM circuits')).toEqual([]);
+  });
+
+  it('migrations 0-4 are the five earlier journal entries, and 0005 is the sixth', () => {
+    expect(journal.entries.map((e) => e.tag.slice(0, 4))).toEqual(['0000', '0001', '0002', '0003', '0004', '0005']);
+  });
+});

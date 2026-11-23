@@ -1,0 +1,23 @@
+node_modules
+dist
+.env*
+!.env.example
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+*.db
+*.log
+packages/diagram/out/
+
+# User data: live database, backups, scratch and recovery folders (never commit)
+apps/api/data*/
+
+# Kept local, not published
+.odin/
+apps/api/evals/results/
+spike/diagram/out/
+
+# Tool output and per-user settings
+.vitest/
+.claude/settings.local.json

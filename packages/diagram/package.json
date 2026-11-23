@@ -1,0 +1,24 @@
+{
+  "name": "@diy-ai/diagram",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./theme": "./src/theme.ts"
+  },
+  "scripts": {
+    "test": "vitest run --reporter=verbose",
+    "typecheck": "tsc --noEmit",
+    "render": "tsx scripts/render.ts"
+  },
+  "dependencies": {
+    "@diy-ai/core": "workspace:*",
+    "elkjs": "^0.12.1"
+  },
+  "devDependencies": {
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vitest": "^5.1.0"
+  }
+}

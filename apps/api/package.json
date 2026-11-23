@@ -1,0 +1,34 @@
+{
+  "name": "@diy-ai/api",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "start": "tsx src/server.ts",
+    "dev:scratch": "DIY_AI_SCRATCH=1 tsx watch src/server.ts",
+    "start:scratch": "DIY_AI_SCRATCH=1 tsx src/server.ts",
+    "test": "vitest run --reporter=verbose",
+    "typecheck": "tsc --noEmit",
+    "eval": "tsx evals/run.ts",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "tsx src/migrate.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^1.8.0",
+    "@diy-ai/core": "workspace:*",
+    "@hono/node-server": "^2.1.8",
+    "better-sqlite3": "^12.11.1",
+    "drizzle-orm": "^0.45.4",
+    "hono": "^4.13.18",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/node": "^26.6.6",
+    "drizzle-kit": "^0.31.11",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vitest": "^5.1.0"
+  }
+}

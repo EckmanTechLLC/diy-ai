@@ -1,0 +1,48 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1794598766995,
+      "tag": "0000_powerful_bruce_banner",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1794669644337,
+      "tag": "0001_fantastic_nomad",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1794669965441,
+      "tag": "0002_nebulous_blizzard",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1794756919918,
+      "tag": "0003_familiar_hardball",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1794758579193,
+      "tag": "0004_useful_layla_miller",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1794776583661,
+      "tag": "0005_massive_paladin",
+      "breakpoints": true
+    }
+  ]
+}
