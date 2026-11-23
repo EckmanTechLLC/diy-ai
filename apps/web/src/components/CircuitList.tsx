@@ -3,6 +3,7 @@ import { ArrowDown, ArrowUp, Check, Pencil, ShieldAlert, Trash2, X } from 'lucid
 import type { ProjectCircuit } from '@/api/client';
 import { useDeleteCircuit, useRenameCircuit, useReorderCircuits } from '@/api/hooks';
 import { StatusIcon, statusTone } from '@/components/ChecksPanel';
+import { ProtectionChips } from '@/components/PlanParts';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { ErrorNotice } from '@/components/feedback';
 import { Button } from '@/components/ui/button';
@@ -131,6 +132,7 @@ function Row({
             {summary.kind === 'custom' && <ShieldAlert className="size-3.5 shrink-0" aria-hidden />}
             <span className="truncate">{summary.text}</span>
           </span>
+          {circuit.plan && <ProtectionChips protection={circuit.plan.protection} className="pl-[1.375rem]" />}
         </button>
       )}
       {!editing && (

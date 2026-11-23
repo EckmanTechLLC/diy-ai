@@ -10,7 +10,9 @@ import type { FindingFocus } from '@/components/DiagramCanvas';
 import { DiagramView } from '@/components/DiagramView';
 import { ErrorNotice } from '@/components/feedback';
 import { NotFound } from '@/components/NotFound';
+import { FromThePlan } from '@/components/FromThePlan';
 import { OriginBadge } from '@/components/OriginBadge';
+import { ProtectionChips } from '@/components/PlanParts';
 import { DeleteProjectDialog, EditProjectDialog } from '@/components/ProjectDialogs';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -152,6 +154,7 @@ export function ProjectPage() {
             </h1>
             <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
               {origin && <OriginBadge info={origin} />}
+              {selectedCircuit.plan && <ProtectionChips protection={selectedCircuit.plan.protection} />}
               <button
                 type="button"
                 onClick={showChecks}
@@ -177,6 +180,7 @@ export function ProjectPage() {
         </header>
         <CircuitList projectId={p.id} circuits={p.circuits} selectedId={selectedCircuit.id} onSelect={selectCircuit} />
         <DiagramView projectId={p.id} circuitId={selectedCircuit.id} circuit={selectedCircuit.circuit} focus={focus} onFocusChange={() => setFocus(null)} />
+        {selectedCircuit.plan && <FromThePlan info={selectedCircuit.plan} />}
         <ChecksPanel
           findings={findings}
           status={status}

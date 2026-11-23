@@ -101,6 +101,15 @@ export function useReorderCircuits(projectId: string) {
   });
 }
 
+/** Discarding a plan changes the project only (circuits stay); the project replaces the cached one. */
+export function useDiscardPlan(projectId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.discardPlan(projectId),
+    onSuccess: (change) => storeChange(qc, change),
+  });
+}
+
 export function useDeleteProject() {
   const qc = useQueryClient();
   return useMutation({
@@ -211,7 +220,7 @@ export function useSendMessage(projectId: string) {
     mutationFn: ({ content, selectedCircuitId }: SendInput) => api.sendMessage(projectId, content, selectedCircuitId),
     onMutate: async ({ content }) => {
       await qc.cancelQueries({ queryKey: keys.messages(projectId) });
-      const optimistic: ChatMessage = { id: `pending-${++optimisticCounter}`, role: 'user', content, kind: null, origin: null, circuitId: null, errorCode: null, findings: null, createdAt: Date.now() };
+      const optimistic: ChatMessage = { id: `pending-${++optimisticCounter}`, role: 'user', content, kind: null, origin: null, circuitId: null, errorCode: null, findings: null, plan: null, createdCircuitIds: null, createdAt: Date.now() };
       qc.setQueryData<ChatMessage[]>(keys.messages(projectId), (list) => [...(list ?? []), optimistic]);
       return { optimisticId: optimistic.id };
     },

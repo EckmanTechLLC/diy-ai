@@ -346,3 +346,59 @@ describe('circuit routes', () => {
     expect('clearCircuit' in api).toBe(false);
   });
 });
+
+describe('plan routes', () => {
+  const plan = { circuits: [{ name: 'Receptacles 1', breakerAmps: 20 }], findings: [], reminders: [], notCovered: [], assumptions: {} };
+
+  it('discards the plan with DELETE on the plan path and returns the project', async () => {
+    const fetchMock = stubFetch(() => json({ project: { id: 'p/1', plan: null, inventory: null, planOptions: null, planBuiltAt: null, circuits: [] }, affectedCircuitId: null }));
+    const res = await api.discardPlan('p/1');
+    expect(fetchMock.mock.calls[0]![0]).toBe('/api/projects/p%2F1/plan');
+    expect(fetchMock.mock.calls[0]![1]!.method).toBe('DELETE');
+    expect(res.project.plan).toBeNull();
+    expect(res.affectedCircuitId).toBeNull();
+  });
+
+  it('surfaces NOT_FOUND and BUSY from the discard call', async () => {
+    stubFetch(() => json({ error: { code: 'NOT_FOUND', message: 'Project not found' } }, 404));
+    expect((await caught(api.discardPlan('x'))).code).toBe('NOT_FOUND');
+    stubFetch(() => json({ error: { code: 'BUSY', message: 'A reply is still being written for this project.' } }, 409));
+    expect((await caught(api.discardPlan('x'))).status).toBe(409);
+  });
+
+  it('passes the project plan fields and the circuit plan info through unchanged', async () => {
+    const info = { protection: { gfci: 'first-receptacle', afci: true }, rooms: [], reasons: [{ kind: 'rule', ruleId: 'afci-living-areas', text: 't' }], plannedLoadVa: 720, capacityVa: 1440 };
+    stubFetch(() =>
+      json({ id: 'p', name: 'P', description: '', createdAt: 1, updatedAt: 2, inventory: { basement: true, rooms: [] }, planOptions: {}, plan, planBuiltAt: 5, circuits: [{ id: 'c1', name: 'R', position: 0, circuit: {}, origin: null, findings: [], plan: info, updatedAt: 2 }] }),
+    );
+    const p = await api.getProject('p');
+    expect(p.plan).toEqual(plan);
+    expect(p.planBuiltAt).toBe(5);
+    expect(p.inventory).toEqual({ basement: true, rooms: [] });
+    expect(p.circuits[0]!.plan).toEqual(info);
+  });
+
+  it('passes plan and plan_built messages through with their plan and created circuit ids', async () => {
+    stubFetch(() =>
+      json([
+        { id: 'a', role: 'assistant', content: 'x', kind: 'plan', plan, createdCircuitIds: null, createdAt: 1 },
+        { id: 'b', role: 'assistant', content: 'y', kind: 'plan_built', plan, createdCircuitIds: ['c1', 'c2'], createdAt: 2 },
+      ]),
+    );
+    const list = await api.listMessages('p');
+    expect(list.map((m) => m.kind)).toEqual(['plan', 'plan_built']);
+    expect(list[0]!.plan).toEqual(plan);
+    expect(list[1]!.createdCircuitIds).toEqual(['c1', 'c2']);
+  });
+
+  it('parses a plan_build_failed message with its findings, not as a settings error', async () => {
+    const finding = { ruleId: 'no-short', severity: 'error', message: 'm', involved: [], citation: { edition: 'nec-2023', section: null, confirmed: false } };
+    stubFetch(() =>
+      json([{ id: 'a', role: 'assistant', content: 'The plan was not built: circuit "Lights 1" was rejected', kind: 'error', errorCode: 'plan_build_failed', findings: [finding], createdAt: 1 }]),
+    );
+    const [m] = await api.listMessages('p');
+    expect(m!.errorCode).toBe('plan_build_failed');
+    expect(m!.findings).toEqual([finding]);
+    expect(SETTINGS_ERROR_CODES).not.toContain('plan_build_failed');
+  });
+});

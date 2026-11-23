@@ -1,7 +1,8 @@
 import { Link } from 'react-router';
-import { AlertCircle, AlertTriangle, Ban, HelpCircle } from 'lucide-react';
+import { AlertCircle, AlertTriangle, Ban, HelpCircle, Hammer } from 'lucide-react';
 import { SETTINGS_ERROR_CODES, type ChatMessage } from '@/api/client';
 import { RULES } from '@diy-ai/core';
+import { PlanCard, type PlanCardState } from '@/components/chat/PlanCard';
 import { OriginBadge } from '@/components/OriginBadge';
 import { groupFindings } from '@/lib/findings';
 import { messageTarget } from '@/lib/circuits';
@@ -17,6 +18,7 @@ export function MessageBubble({
   circuits,
   onSelectCircuit,
   onShowChecks,
+  planState = 'current',
 }: {
   message: ChatMessage;
   pending: boolean;
@@ -25,6 +27,8 @@ export function MessageBubble({
   /** Selects a circuit on the page (and closes the chat drawer on narrow screens). */
   onSelectCircuit: (id: string) => void;
   onShowChecks?: () => void;
+  /** For a `plan` message: whether it is the current plan, replaced by a newer one, or discarded. */
+  planState?: PlanCardState;
 }) {
   if (message.role === 'user') {
     return (
@@ -43,7 +47,7 @@ export function MessageBubble({
             <AlertCircle className="mt-0.5 size-4 shrink-0 text-destructive" aria-hidden />
             <span>{message.content}</span>
           </p>
-          {message.errorCode === 'rules_failed' && message.findings && message.findings.length > 0 && (
+          {(message.errorCode === 'rules_failed' || message.errorCode === 'plan_build_failed') && message.findings && message.findings.length > 0 && (
             <div className="ml-6 grid gap-1">
               <p className="text-xs font-medium">Failed checks:</p>
               <ul className="grid list-disc gap-1 pl-4 text-xs">
@@ -74,6 +78,59 @@ export function MessageBubble({
             <Ban className="size-3.5" aria-hidden /> Not supported
           </p>
           <p>{message.content}</p>
+        </div>
+      </div>
+    );
+  }
+
+  // A plan is shown from its structured data; a plan message stored without it (older ones) falls through to plain text.
+  if (message.kind === 'plan' && message.plan) {
+    return (
+      <div className="flex justify-start">
+        <div className="w-full min-w-0">
+          <PlanCard plan={message.plan} state={planState} />
+        </div>
+      </div>
+    );
+  }
+
+  if (message.kind === 'plan_built') {
+    const ids = message.createdCircuitIds ?? [];
+    const created = message.plan?.circuits.length ?? ids.length;
+    const gone = Math.max(0, created - ids.length);
+    return (
+      <div className="flex justify-start">
+        <div className={cn(base, 'grid gap-2 rounded-bl-sm bg-muted')}>
+          <p className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+            <Hammer className="size-3.5" aria-hidden /> Plan built
+          </p>
+          <p>{message.content}</p>
+          {(ids.length > 0 || gone > 0) && (
+            <div className="grid gap-1 text-xs">
+              <p className="text-muted-foreground">Circuits created:</p>
+              <ul className="grid gap-0.5 pl-4">
+                {ids.map((id) => {
+                  const target = messageTarget(id, circuits);
+                  return (
+                    <li key={id} className="list-disc">
+                      {target.kind === 'circuit' ? (
+                        <button type="button" onClick={() => onSelectCircuit(target.id)} className="text-left font-medium text-primary underline underline-offset-2" title="Show this circuit">
+                          {target.name}
+                        </button>
+                      ) : (
+                        <span>{target.text}</span>
+                      )}
+                    </li>
+                  );
+                })}
+                {Array.from({ length: gone }, (_, i) => (
+                  <li key={`gone-${i}`} className="list-disc text-muted-foreground">
+                    a circuit that was later deleted
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
         </div>
       </div>
     );

@@ -3,11 +3,13 @@ import { ArrowDown, Eraser, MessageSquare, PanelRightClose, PanelRightOpen, X } 
 import { type Project } from '@/api/client';
 import { isOptimistic, useClaudeModels, useClearMessages, useLlmStatus, useMessages, usePendingSince, useSendMessage } from '@/api/hooks';
 import { activeModelName } from '@/components/settings/ActiveModelCard';
+import { PlanStatus } from '@/components/chat/PlanStatus';
 import { Composer } from '@/components/chat/Composer';
 import { MessageBubble } from '@/components/chat/MessageBubble';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { ErrorNotice, Spinner } from '@/components/feedback';
 import { Button } from '@/components/ui/button';
+import { currentPlanMessageId } from '@/lib/plan';
 import { SIDEBAR_MAX, SIDEBAR_MIN, useMediaQuery, useSidebarPrefs } from '@/lib/prefs';
 import { cn } from '@/lib/utils';
 
@@ -148,6 +150,7 @@ export function ChatSidebar({
   }, [wide, drawerOpen]);
 
   const list = messages.data ?? [];
+  const currentPlanId = currentPlanMessageId(list);
 
   // stay on the newest message unless the user has scrolled up
   useLayoutEffect(() => {
@@ -179,8 +182,11 @@ export function ChatSidebar({
       { content: text, selectedCircuitId: selected?.id },
       {
         onError: () => setDraft((d) => d || text),
-        // the circuit the reply added or replaced becomes the selected one
-        onSuccess: (res) => res.affectedCircuitId && onSelectCircuit(res.affectedCircuitId),
+        // the circuit the reply added or replaced, or the first one a plan build created, becomes the selected one
+        onSuccess: (res) => {
+          const next = res.affectedCircuitId ?? res.assistantMessage.createdCircuitIds?.[0] ?? null;
+          if (next) onSelectCircuit(next);
+        },
       },
     );
   };
@@ -276,6 +282,7 @@ export function ChatSidebar({
                   key={m.id}
                   message={m}
                   pending={isOptimistic(m)}
+                  planState={m.id !== currentPlanId ? 'superseded' : project.plan ? 'current' : 'discarded'}
                   circuits={project.circuits}
                   onSelectCircuit={(id) => {
                     if (!wide) setDrawerOpen(false);
@@ -302,6 +309,7 @@ export function ChatSidebar({
       </div>
 
       <div className="grid shrink-0 gap-2 border-t p-3">
+        <PlanStatus project={project} disabled={pending} />
         {send.isError && !pending && (
           <div className="grid gap-1.5">
             <ErrorNotice error={send.error} />

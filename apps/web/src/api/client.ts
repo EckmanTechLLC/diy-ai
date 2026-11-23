@@ -1,4 +1,4 @@
-import type { CircuitModel, CircuitOrigin, Finding } from '@diy-ai/core';
+import type { CircuitModel, CircuitOrigin, CircuitPlanInfo, Finding, Inventory, Plan, PlanOptions } from '@diy-ai/core';
 
 export interface ProjectSummary {
   id: string;
@@ -19,11 +19,20 @@ export interface ProjectCircuit {
   origin: CircuitOrigin | null;
   /** Rule findings the server stored with the circuit (warnings only, since a circuit with errors is never stored). Not the display source: the page re-checks. */
   findings: Finding[];
+  /** What the plan required of a circuit built from a plan and the diagram cannot show (AFCI, GFCI); null for other circuits. */
+  plan: CircuitPlanInfo | null;
   updatedAt: number;
 }
 
 export interface Project extends Omit<ProjectSummary, 'circuitCount'> {
   circuits: ProjectCircuit[];
+  /** The stored room inventory; null when the project has no plan. */
+  inventory: Inventory | null;
+  planOptions: PlanOptions | null;
+  /** The plan the planner makes from the inventory and options; null without an inventory. Never stored, always computed. */
+  plan: Plan | null;
+  /** When the plan was built into circuits (epoch ms); null while it is not built. */
+  planBuiltAt: number | null;
 }
 
 /** Result of a circuit write: the whole project afterwards, and the circuit the write created or changed (null for delete and reorder). */
@@ -134,7 +143,7 @@ export interface EndpointInput {
   model?: string;
 }
 
-export type MessageKind = 'question' | 'circuit' | 'unsupported' | 'error';
+export type MessageKind = 'question' | 'circuit' | 'unsupported' | 'error' | 'plan' | 'plan_built';
 
 /** Why an assistant message is an error; mirrors the API's failure codes. */
 export type MessageErrorCode =
@@ -152,6 +161,7 @@ export type MessageErrorCode =
   | 'invalid_reply'
   | 'rules_failed'
   | 'block_rule_bug'
+  | 'plan_build_failed'
   /** Legacy: stored by earlier versions. */
   | 'template_rule_bug';
 
@@ -171,6 +181,10 @@ export interface ChatMessage {
   findings: Finding[] | null;
   /** The circuit a `circuit` message created or replaced; null when none, or when that circuit was deleted later. */
   circuitId: string | null;
+  /** The plan shown by a `plan` message, or the plan that was built by a `plan_built` message; null for other messages and for older ones. */
+  plan: Plan | null;
+  /** The circuits a `plan_built` message created that still exist, in plan order; null for other messages. */
+  createdCircuitIds: string[] | null;
   createdAt: number;
 }
 
@@ -215,5 +229,7 @@ export const api = {
   listMessages: (projectId: string) => request<ChatMessage[]>('GET', `/projects/${enc(projectId)}/messages`),
   sendMessage: (projectId: string, content: string, selectedCircuitId?: string) =>
     request<SendMessageResult>('POST', `/projects/${enc(projectId)}/messages`, selectedCircuitId ? { content, selectedCircuitId } : { content }),
+  /** Forgets the stored plan (inventory and options). Circuits already built from it stay. */
+  discardPlan: (projectId: string) => request<ProjectChange>('DELETE', `/projects/${enc(projectId)}/plan`),
   clearMessages: (projectId: string) => request<void>('DELETE', `/projects/${enc(projectId)}/messages`),
 };
