@@ -7,7 +7,7 @@ import { providerUnavailable, runChat, type ChatOutcome } from './chat/loop';
 import { fail, readBody } from './http';
 import type { ActiveProviderResult } from './llm';
 import { getOwnerId } from './owner';
-import { CircuitName, appendCircuit, listCircuits, loadProject, touchProject } from './circuits';
+import { CircuitName, appendCircuit, listCircuits, loadProject, pruneCableLengths, touchProject } from './circuits';
 import type { PlanState } from './chat/loop';
 import { circuits, messages, projects } from './schema';
 
@@ -122,7 +122,7 @@ export function chatRoutes(db: Db, resolveProvider: ProviderResolver) {
               : undefined;
           if (target) {
             tx.update(circuits)
-              .set({ circuit: outcome.circuit, origin: outcome.origin, findings: outcome.findings, plan: null, ...(name ? { name } : {}), updatedAt: at })
+              .set({ circuit: outcome.circuit, origin: outcome.origin, findings: outcome.findings, plan: null, cableLengths: pruneCableLengths(target.cableLengths, outcome.circuit), ...(name ? { name } : {}), updatedAt: at })
               .where(eq(circuits.id, target.id))
               .run();
             affectedCircuitId = target.id;

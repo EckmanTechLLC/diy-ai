@@ -171,7 +171,7 @@ describe('circuits', () => {
     expect(got.circuits.map((c: any) => c.name)).toEqual(['Circuit 1', 'Circuit 2', 'Circuit 3', 'Circuit 4']);
     expect(got.circuits.map((c: any) => c.position)).toEqual([0, 1, 2, 3]);
     expect(got.circuits.map((c: any) => c.circuit)).toEqual(FIXTURES);
-    expect(Object.keys(got.circuits[0]).sort()).toEqual(['circuit', 'findings', 'id', 'name', 'origin', 'plan', 'position', 'updatedAt']);
+    expect(Object.keys(got.circuits[0]).sort()).toEqual(['cableLengths', 'circuit', 'findings', 'id', 'name', 'origin', 'plan', 'position', 'updatedAt']);
     expect(got.circuits[0]).toMatchObject({ origin: null, findings: [] });
   });
 
@@ -340,6 +340,7 @@ describe('owner scoping', () => {
     expect((await call('PATCH', `/api/projects/${id}`, { name: 'hacked' })).status).toBe(404);
     expect((await call('POST', `/api/projects/${id}/circuits`, { circuit: FIXTURES[1] })).status).toBe(404);
     expect((await call('PUT', `/api/projects/${id}/circuits/foreign-c1`, { name: 'hacked' })).status).toBe(404);
+    expect((await call('PUT', `/api/projects/${id}/circuits/foreign-c1/cable-lengths`, { lengths: {}, allowancePct: 15 })).status).toBe(404);
     expect((await call('PUT', `/api/projects/${id}/circuits/order`, { ids: ['foreign-c1'] })).status).toBe(404);
     expect((await call('DELETE', `/api/projects/${id}/circuits/foreign-c1`)).status).toBe(404);
     expect((await call('DELETE', `/api/projects/${id}`)).status).toBe(404);
@@ -347,7 +348,7 @@ describe('owner scoping', () => {
     const row = db.select().from(projects).all().find((r) => r.id === id)!;
     expect(row).toMatchObject({ name: 'Theirs', ownerId: 'someone-else', updatedAt: 1 });
     expect(db.select().from(circuits).all()).toEqual([
-      { id: 'foreign-c1', projectId: id, name: 'Theirs 1', position: 0, circuit: FIXTURES[0], origin: null, findings: null, plan: null, createdAt: 1, updatedAt: 1 },
+      { id: 'foreign-c1', projectId: id, name: 'Theirs 1', position: 0, circuit: FIXTURES[0], origin: null, findings: null, plan: null, cableLengths: null, createdAt: 1, updatedAt: 1 },
     ]);
   });
 });

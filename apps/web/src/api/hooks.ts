@@ -1,7 +1,9 @@
 import { useMutation, useMutationState, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
+import { withCableLengths } from '@/lib/buildplan';
 import {
   api,
   type ActiveModel,
+  type CableLengths,
   type ChatMessage,
   type EndpointInput,
   type LlmStatus,
@@ -77,6 +79,34 @@ export function useRenameCircuit(projectId: string) {
   return useMutation({
     mutationFn: ({ circuitId, name }: { circuitId: string; name: string }) => api.updateCircuit(projectId, circuitId, { name }),
     onSuccess: (change) => storeChange(qc, change),
+  });
+}
+
+/**
+ * Saves the lengths and allowance of one circuit. The cached project is updated at once so the lists and totals follow
+ * the typing; a failed save puts the previous state back. The server's answer replaces the cache once it arrives.
+ */
+export function useSaveCableLengths(projectId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationKey: ['cable-lengths', projectId],
+    mutationFn: ({ circuitId, value }: { circuitId: string; value: CableLengths }) => api.saveCableLengths(projectId, circuitId, value),
+    onMutate: async ({ circuitId, value }) => {
+      await qc.cancelQueries({ queryKey: keys.project(projectId) });
+      const previous = qc.getQueryData<Project>(keys.project(projectId));
+      if (previous) qc.setQueryData<Project>(keys.project(projectId), withCableLengths(previous, circuitId, value));
+      return { previous };
+    },
+    onError: (_err, { circuitId }, ctx) => {
+      // Put back only this circuit's previous value: another save may have changed other state meanwhile.
+      const before = ctx?.previous?.circuits.find((c) => c.id === circuitId);
+      qc.setQueryData<Project>(keys.project(projectId), (p) => (p && before ? withCableLengths(p, circuitId, before.cableLengths) : p));
+    },
+    onSuccess: (change) => {
+      // With another save still in flight the cache already holds the newer optimistic state; that save's answer settles it.
+      if (qc.isMutating({ mutationKey: ['cable-lengths', projectId] }) > 1) return;
+      return storeChange(qc, change);
+    },
   });
 }
 

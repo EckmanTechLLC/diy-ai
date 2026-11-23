@@ -26,6 +26,7 @@ function foldersUpTo(n: number): string {
 }
 const journalFull = JSON.parse(readFileSync(resolve(folder, 'meta/_journal.json'), 'utf8'));
 const folder05 = foldersUpTo(6);
+const folder06 = foldersUpTo(7);
 
 /** An in-memory database at the schema of migrations 0-4, with drizzle's bookkeeping saying so. */
 function oldDatabase() {
@@ -199,7 +200,7 @@ describe('migration 0006: plan storage', () => {
     expect(before.circuits).toHaveLength(3);
     expect(before.messages).toHaveLength(3);
 
-    migrate(drizzle(sqlite), { migrationsFolder: folder });
+    migrate(drizzle(sqlite), { migrationsFolder: folder06 });
 
     const withNew = (rows: Record<string, unknown>[], cols: string[]) => rows.map((r) => ({ ...r, ...Object.fromEntries(cols.map((c) => [c, null])) }));
     expect(dump(sqlite, 'SELECT * FROM projects ORDER BY id')).toEqual(withNew(before.projects, NEW.projects));
@@ -222,8 +223,8 @@ describe('migration 0006: plan storage', () => {
     expect(sql).not.toMatch(/DROP|INSERT|UPDATE|DELETE/i);
   });
 
-  it('the seventh journal entry is new and migrations 0-5 are byte-unchanged', () => {
-    expect(journal.entries).toHaveLength(7);
+  it('the seventh journal entry is 0006 and migrations 0-5 are byte-unchanged', () => {
+    expect(journal.entries.length).toBeGreaterThanOrEqual(7);
     expect(journal.entries[6]!.tag.slice(0, 4)).toBe('0006');
     const sha = (f: string) => createHash('sha256').update(readFileSync(resolve(folder, f))).digest('hex');
     expect(journal.entries.slice(0, 6).map((e) => sha(`${e.tag}.sql`))).toEqual([
@@ -234,5 +235,51 @@ describe('migration 0006: plan storage', () => {
       '49bdccc0d3d3cd6ee40f06a5a8c8cb9b8486c0e91f1a8b8ef68ab17842addbd8',
       '965ecaf535438a67dc3cb9ada3aa32323f51943dc0619e17ce9190036e5435e8',
     ]);
+  });
+});
+
+describe('migration 0007: cable lengths', () => {
+  const sha = (f: string) => createHash('sha256').update(readFileSync(resolve(folder, f))).digest('hex');
+
+  /** A database at migrations 0-6 (real migrator on a trimmed copy), seeded through the 0006 schema. */
+  function databaseAt0006() {
+    const sqlite = new Database(':memory:');
+    sqlite.pragma('foreign_keys = ON');
+    migrate(drizzle(sqlite), { migrationsFolder: folder06 });
+    sqlite.prepare('INSERT INTO projects (id, owner_id, name, description, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)').run('p1', 'local', 'One', 'notes', 1, 2);
+    const c = sqlite.prepare('INSERT INTO circuits (id, project_id, name, position, circuit, origin, findings, plan, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+    c.run('c1', 'p1', 'Basement lights', 0, j(FIXTURES[1]), j({ kind: 'blocks', breakerAmps: 15, name: 'Basement lights', blocks }), j([finding]), j({ protection: { gfci: 'none', afci: true } }), 10, 11);
+    c.run('c2', 'p1', 'Second', 1, j(FIXTURES[2]), j({ kind: 'custom', verified: false }), null, null, 12, 13);
+    sqlite.prepare('INSERT INTO messages (id, project_id, role, content, kind, circuit_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run('m1', 'p1', 'assistant', 'Done.', 'circuit', 'c1', 2);
+    return sqlite;
+  }
+
+  it('existing rows are unchanged and the new column is null', () => {
+    const sqlite = databaseAt0006();
+    const before = { projects: dump(sqlite, 'SELECT * FROM projects'), circuits: dump(sqlite, 'SELECT * FROM circuits ORDER BY id'), messages: dump(sqlite, 'SELECT * FROM messages') };
+    expect(before.circuits).toHaveLength(2);
+
+    migrate(drizzle(sqlite), { migrationsFolder: folder });
+
+    expect(dump(sqlite, 'SELECT * FROM circuits ORDER BY id')).toEqual(before.circuits.map((r) => ({ ...r, cable_lengths: null })));
+    expect(dump(sqlite, 'SELECT * FROM projects')).toEqual(before.projects);
+    expect(dump(sqlite, 'SELECT * FROM messages')).toEqual(before.messages);
+    const col = dump(sqlite, 'PRAGMA table_info(circuits)').find((x) => x.name === 'cable_lengths')!;
+    expect(col).toMatchObject({ type: 'TEXT', notnull: 0 });
+    expect(dump(sqlite, 'PRAGMA foreign_key_check')).toEqual([]);
+    expect(dump(sqlite, 'SELECT COUNT(*) AS n FROM __drizzle_migrations')).toEqual([{ n: 8 }]);
+  });
+
+  it('is one additive column and nothing else', () => {
+    const sql = readFileSync(resolve(folder, `${journal.entries[7]!.tag}.sql`), 'utf8');
+    const stmts = sql.split('--> statement-breakpoint').map((x) => x.trim()).filter(Boolean);
+    expect(stmts).toEqual(['ALTER TABLE `circuits` ADD `cable_lengths` text;']);
+    expect(sql).not.toMatch(/DROP|INSERT|UPDATE|DELETE/i);
+  });
+
+  it('the eighth journal entry is 0007 and migration 0006 is byte-unchanged', () => {
+    expect(journal.entries.length).toBeGreaterThanOrEqual(8);
+    expect(journal.entries[7]!.tag.slice(0, 4)).toBe('0007');
+    expect(sha(`${journal.entries[6]!.tag}.sql`)).toBe('848e67d5315b8697bff3a7d562816cc6469a7b4b03b5154ecb97ef20ea9f6746');
   });
 });

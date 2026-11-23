@@ -1,0 +1,1 @@
+ALTER TABLE `circuits` ADD `cable_lengths` text;

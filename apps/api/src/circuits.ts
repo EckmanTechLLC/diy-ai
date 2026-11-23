@@ -4,7 +4,7 @@ import { and, eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { checkCircuit, planCircuits, validateCircuit, type CircuitModel, type CircuitOrigin, type CircuitPlanInfo, type Finding, type Plan } from '@diy-ai/core';
 import type { Db } from './db';
-import { circuits, projects, type CircuitRow, type ProjectRow } from './schema';
+import { circuits, projects, type CableLengths, type CircuitRow, type ProjectRow } from './schema';
 
 type Tx = Parameters<Parameters<Db['transaction']>[0]>[0];
 export type DbOrTx = Db | Tx;
@@ -21,8 +21,16 @@ export const circuitToApi = (row: CircuitRow) => ({
   origin: row.origin,
   findings: row.findings ?? [],
   plan: row.plan ?? null,
+  cableLengths: row.cableLengths ?? null,
   updatedAt: row.updatedAt,
 });
+
+/** The stored cable lengths without the entries for cables the circuit no longer has; null stays null. */
+export function pruneCableLengths(stored: CableLengths | null, circuit: CircuitModel): CableLengths | null {
+  if (!stored) return null;
+  const ids = new Set(circuit.cables.map((c) => c.id));
+  return { ...stored, lengths: Object.fromEntries(Object.entries(stored.lengths).filter(([id]) => ids.has(id))) };
+}
 
 type ProjectBase = Pick<ProjectRow, 'id' | 'name' | 'description' | 'createdAt' | 'updatedAt' | 'inventory' | 'planOptions' | 'planBuiltAt'>;
 

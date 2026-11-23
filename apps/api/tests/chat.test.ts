@@ -469,6 +469,17 @@ describe('several circuits', () => {
     expect(rows()).toHaveLength(2);
   });
 
+  it('target selected keeps cable lengths of cables that still exist and drops the others', async () => {
+    const p = await createProject();
+    const c1 = await addCircuit(p.id, FIXTURES[1], 'Second'); // cables feed, trav, load
+    const put = await call('PUT', `/api/projects/${p.id}/circuits/${c1}/cable-lengths`, { lengths: { feed: 25, trav: 8, load: 12 }, allowancePct: 20 });
+    expect(put.status).toBe(200);
+    use(scripted(ok(fixtureReply(3, 'selected'))).provider); // cables feed, loada, loadb
+    const b = await (await post(p.id, 'rewire the second', c1)).json();
+    expect(b.project.circuits[0].cableLengths).toEqual({ lengths: { feed: 25 }, allowancePct: 20 });
+    expect(rows()[0]!.cableLengths).toEqual({ lengths: { feed: 25 }, allowancePct: 20 });
+  });
+
   it('target selected replaces findings too', async () => {
     const p = await createProject();
     const c0 = await addCircuit(p.id, FIXTURES[0]);

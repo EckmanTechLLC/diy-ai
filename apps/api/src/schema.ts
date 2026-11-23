@@ -28,6 +28,12 @@ export const projects = sqliteTable(
 
 export type ProjectRow = typeof projects.$inferSelect;
 
+/** Lengths the user entered for the cable runs of a circuit, in feet per cable id, and the allowance in percent added to the known total. */
+export interface CableLengths {
+  lengths: Record<string, number>;
+  allowancePct: number;
+}
+
 /** The circuits of a project, ordered by `position` (contiguous from 0). */
 export const circuits = sqliteTable(
   'circuits',
@@ -44,6 +50,8 @@ export const circuits = sqliteTable(
     findings: text('findings', { mode: 'json' }).$type<Finding[]>(),
     /** What the plan said about this circuit (protection, rooms, reasons); null for circuits not built from a plan. */
     plan: text('plan', { mode: 'json' }).$type<CircuitPlanInfo>(),
+    /** What the user entered for the circuit's cable runs (ADR-010); null until they enter something. */
+    cableLengths: text('cable_lengths', { mode: 'json' }).$type<CableLengths>(),
     createdAt: integer('created_at').notNull(),
     updatedAt: integer('updated_at').notNull(),
   },

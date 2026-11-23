@@ -5,18 +5,22 @@ import { Pencil, Trash2, CircuitBoard, MessageSquare } from 'lucide-react';
 import { useProject } from '@/api/hooks';
 import { ChatSidebar } from '@/components/chat/ChatSidebar';
 import { CircuitList } from '@/components/CircuitList';
+import { CircuitTabs, panelId, tabId } from '@/components/CircuitTabs';
 import { ChecksPanel, StatusIcon, statusTone } from '@/components/ChecksPanel';
 import type { FindingFocus } from '@/components/DiagramCanvas';
 import { DiagramView } from '@/components/DiagramView';
 import { ErrorNotice } from '@/components/feedback';
 import { NotFound } from '@/components/NotFound';
 import { FromThePlan } from '@/components/FromThePlan';
+import { MaterialsTab } from '@/components/MaterialsTab';
+import { StepsTab } from '@/components/StepsTab';
 import { OriginBadge } from '@/components/OriginBadge';
 import { ProtectionChips } from '@/components/PlanParts';
 import { DeleteProjectDialog, EditProjectDialog } from '@/components/ProjectDialogs';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { checkForDisplay, findingHighlight, isEmptyHighlight, statusBadgeText, statusOf, type FindingGroup } from '@/lib/findings';
+import { isTab, parseTab, type Tab } from '@/lib/buildplan';
 import { pickCircuit } from '@/lib/circuits';
 import { describeOrigin } from '@/lib/origin';
 import { useChecksPanelOpen } from '@/lib/prefs';
@@ -49,6 +53,25 @@ export function ProjectPage() {
       ),
     [setParams],
   );
+  // The tab lives in the URL too (?tab=materials|steps); the diagram is the default, and an unknown value falls back to it.
+  const tabParam = params.get('tab');
+  const tab = parseTab(tabParam);
+  const selectTab = useCallback(
+    (next: Tab) =>
+      setParams(
+        (prev) => {
+          const p = new URLSearchParams(prev);
+          if (next === 'diagram') p.delete('tab');
+          else p.set('tab', next);
+          return p;
+        },
+        { replace: true },
+      ),
+    [setParams],
+  );
+  useEffect(() => {
+    if (tabParam !== null && !isTab(tabParam)) selectTab('diagram');
+  }, [tabParam, selectTab]);
   // Checked in the browser so the panel is current for any stored circuit; memoised per circuit object.
   const findings = useMemo(() => (circuit ? checkForDisplay(circuit) : []), [circuit]);
   const status = useMemo(() => statusOf(findings), [findings]);
@@ -67,9 +90,11 @@ export function ProjectPage() {
     [circuit],
   );
   const showChecks = useCallback(() => {
+    // the checks panel belongs to the Diagram tab
+    selectTab('diagram');
     setChecksOpen(true);
     setRevealChecks((n) => n + 1);
-  }, [setChecksOpen]);
+  }, [setChecksOpen, selectTab]);
 
   const name = project.data?.name;
   useEffect(() => {
@@ -179,17 +204,26 @@ export function ProjectPage() {
           {actions}
         </header>
         <CircuitList projectId={p.id} circuits={p.circuits} selectedId={selectedCircuit.id} onSelect={selectCircuit} />
-        <DiagramView projectId={p.id} circuitId={selectedCircuit.id} circuit={selectedCircuit.circuit} focus={focus} onFocusChange={() => setFocus(null)} />
-        {selectedCircuit.plan && <FromThePlan info={selectedCircuit.plan} />}
-        <ChecksPanel
-          findings={findings}
-          status={status}
-          open={checksOpen}
-          onOpenChange={setChecksOpen}
-          activeRule={focus?.ruleId ?? null}
-          onPick={pick}
-          revealSignal={revealChecks}
-        />
+        <CircuitTabs value={tab} onChange={selectTab} />
+        <div role="tabpanel" id={panelId(tab)} aria-labelledby={tabId(tab)} className={cn('flex min-h-0 flex-1 flex-col', tab === 'diagram' ? 'gap-3' : 'overflow-y-auto pt-1')}>
+          {tab === 'diagram' && (
+            <>
+              <DiagramView projectId={p.id} circuitId={selectedCircuit.id} circuit={selectedCircuit.circuit} focus={focus} onFocusChange={() => setFocus(null)} />
+              {selectedCircuit.plan && <FromThePlan info={selectedCircuit.plan} />}
+              <ChecksPanel
+                findings={findings}
+                status={status}
+                open={checksOpen}
+                onOpenChange={setChecksOpen}
+                activeRule={focus?.ruleId ?? null}
+                onPick={pick}
+                revealSignal={revealChecks}
+              />
+            </>
+          )}
+          {tab === 'materials' && <MaterialsTab key={selectedCircuit.id} projectId={p.id} circuit={selectedCircuit} />}
+          {tab === 'steps' && <StepsTab key={selectedCircuit.id} projectId={p.id} circuit={selectedCircuit} />}
+        </div>
         {dialogs}
       </div>,
     );

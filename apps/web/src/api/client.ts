@@ -9,6 +9,12 @@ export interface ProjectSummary {
   updatedAt: number;
 }
 
+/** What the user entered for the cable runs of a circuit: feet per cable id, and the allowance in percent added to the known totals. */
+export interface CableLengths {
+  lengths: Record<string, number>;
+  allowancePct: number;
+}
+
 /** One circuit of a project. Circuits come in the project's order (`position`). */
 export interface ProjectCircuit {
   id: string;
@@ -21,6 +27,8 @@ export interface ProjectCircuit {
   findings: Finding[];
   /** What the plan required of a circuit built from a plan and the diagram cannot show (AFCI, GFCI); null for other circuits. */
   plan: CircuitPlanInfo | null;
+  /** Lengths and allowance the user entered for the cable runs; null until they enter something. */
+  cableLengths: CableLengths | null;
   updatedAt: number;
 }
 
@@ -213,6 +221,9 @@ export const api = {
   /** Rename and/or replace the wiring; at least one of `name` and `circuit` is required by the server. */
   updateCircuit: (projectId: string, circuitId: string, patch: { name?: string; circuit?: CircuitModel }) =>
     request<ProjectChange>('PUT', `/projects/${enc(projectId)}/circuits/${enc(circuitId)}`, patch),
+  /** Replaces the circuit's lengths and allowance: a cable left out of `lengths` has no length. */
+  saveCableLengths: (projectId: string, circuitId: string, body: CableLengths) =>
+    request<ProjectChange>('PUT', `/projects/${enc(projectId)}/circuits/${enc(circuitId)}/cable-lengths`, body),
   deleteCircuit: (projectId: string, circuitId: string) =>
     request<ProjectChange>('DELETE', `/projects/${enc(projectId)}/circuits/${enc(circuitId)}`),
   /** `ids` must list every circuit of the project exactly once, in the new order. */

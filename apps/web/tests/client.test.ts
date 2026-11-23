@@ -173,6 +173,26 @@ describe('settings routes', () => {
   });
 });
 
+describe('cable lengths', () => {
+  it('saves lengths and allowance with PUT to the circuit path, ids encoded', async () => {
+    const change = { project: { id: 'p' }, affectedCircuitId: 'c/1' };
+    const fetchMock = stubFetch(() => json(change));
+    const body = { lengths: { feed: 25, load: 12.5 }, allowancePct: 10 };
+    await expect(api.saveCableLengths('p 1', 'c/1', body)).resolves.toEqual(change);
+    expect(fetchMock.mock.calls[0]![0]).toBe('/api/projects/p%201/circuits/c%2F1/cable-lengths');
+    const init = fetchMock.mock.calls[0]![1]!;
+    expect(init.method).toBe('PUT');
+    expect(JSON.parse(init.body as string)).toEqual(body);
+  });
+
+  it('surfaces a rejected length as a VALIDATION error with its issues', async () => {
+    stubFetch(() => json({ error: { code: 'VALIDATION', message: 'Not cables of this circuit: ghost', issues: [{ path: 'lengths.ghost', message: 'not a cable of this circuit' }] } }, 400));
+    const err = await caught(api.saveCableLengths('p', 'c', { lengths: { ghost: 1 }, allowancePct: 15 }));
+    expect(err).toMatchObject({ code: 'VALIDATION', status: 400, message: expect.stringContaining('ghost') });
+    expect(err.issues).toEqual([{ path: 'lengths.ghost', message: 'not a cable of this circuit' }]);
+  });
+});
+
 describe('message routes', () => {
   it('lists messages and sends content to the project path', async () => {
     const fetchMock = stubFetch((url, init) =>
