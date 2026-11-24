@@ -2,6 +2,7 @@ import { Link } from 'react-router';
 import { AlertCircle, AlertTriangle, Ban, HelpCircle, Hammer } from 'lucide-react';
 import { SETTINGS_ERROR_CODES, type ChatMessage } from '@/api/client';
 import { RULES } from '@diy-ai/core';
+import { BuildProposalCard, type ProposalState } from '@/components/chat/BuildProposalCard';
 import { PlanCard, type PlanCardState } from '@/components/chat/PlanCard';
 import { OriginBadge } from '@/components/OriginBadge';
 import { groupFindings } from '@/lib/findings';
@@ -19,6 +20,7 @@ export function MessageBubble({
   onSelectCircuit,
   onShowChecks,
   planState = 'current',
+  proposal,
 }: {
   message: ChatMessage;
   pending: boolean;
@@ -29,6 +31,8 @@ export function MessageBubble({
   onShowChecks?: () => void;
   /** For a `plan` message: whether it is the current plan, replaced by a newer one, or discarded. */
   planState?: PlanCardState;
+  /** For a `build_proposed` message: whether it can be acted on, and the build action's state. */
+  proposal?: { state: ProposalState; pending: boolean; error: unknown; onBuild: () => void; onDismiss: () => void };
 }) {
   if (message.role === 'user') {
     return (
@@ -89,6 +93,17 @@ export function MessageBubble({
       <div className="flex justify-start">
         <div className="w-full min-w-0">
           <PlanCard plan={message.plan} state={planState} />
+        </div>
+      </div>
+    );
+  }
+
+  // A proposal is shown from its plan data; the model's own wording is not shown, since nothing is built until the user says so.
+  if (message.kind === 'build_proposed' && message.plan && proposal) {
+    return (
+      <div className="flex justify-start">
+        <div className="w-full min-w-0">
+          <BuildProposalCard plan={message.plan} {...proposal} />
         </div>
       </div>
     );

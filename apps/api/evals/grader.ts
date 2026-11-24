@@ -157,7 +157,7 @@ export function summariseInventory(inventory: Inventory, options: PlanOptions) {
 function notACircuit(outcome: ChatOutcome, question: string): Grade {
   if (outcome.kind === 'question') return bad(question, `got ${describe(outcome)}`);
   if (outcome.kind === 'inventory') return bad('wrong routing', `got an inventory (${describe(outcome)}) instead of a circuit`);
-  if (outcome.kind === 'build' || outcome.kind === 'build_blocked') return bad('wrong routing', `got ${describe(outcome)} instead of a circuit`);
+  if (outcome.kind === 'build_proposed' || outcome.kind === 'build_blocked') return bad('wrong routing', `got ${describe(outcome)} instead of a circuit`);
   return bad('declined a supported job', `got ${describe(outcome)}`);
 }
 
@@ -190,7 +190,7 @@ export function gradeOutcome(expect: Expect, outcome: ChatOutcome): Grade {
     case 'inventory': {
       if (outcome.kind !== 'inventory') {
         if (outcome.kind === 'question') return bad('asked instead of planning', `got ${describe(outcome)}`);
-        if (outcome.kind === 'circuit' || outcome.kind === 'build' || outcome.kind === 'build_blocked') return bad('wrong routing', `got ${describe(outcome)} instead of an inventory`);
+        if (outcome.kind === 'circuit' || outcome.kind === 'build_proposed' || outcome.kind === 'build_blocked') return bad('wrong routing', `got ${describe(outcome)} instead of an inventory`);
         return bad('declined a supported job', `got ${describe(outcome)}`);
       }
       const diff = compareInventory(expect.inventory, outcome.inventory, expect.edit ?? false);
@@ -203,7 +203,7 @@ export function gradeOutcome(expect: Expect, outcome: ChatOutcome): Grade {
       return ok(`inventory of ${outcome.inventory.rooms.length} room(s)`);
     }
     case 'build':
-      if (outcome.kind === 'build') return ok(`built ${outcome.circuits.length} circuit(s)`);
+      if (outcome.kind === 'build_proposed') return ok(`proposed building ${outcome.plan.circuits.length} circuit(s)`);
       if (outcome.kind === 'question') return bad('asked instead of building', `got ${describe(outcome)}`);
       if (outcome.kind === 'inventory') return bad('revised inventory instead of building', `got ${describe(outcome)}`);
       if (outcome.kind === 'build_blocked') return bad('build blocked', `the loop refused the build: ${outcome.text}`);
@@ -211,7 +211,7 @@ export function gradeOutcome(expect: Expect, outcome: ChatOutcome): Grade {
     case 'not_build':
       if (outcome.kind === 'question') return ok('asked');
       if (outcome.kind === 'build_blocked') return bad('built without a plan', `model replied build with nothing to build (${describe(outcome)})`);
-      if (outcome.kind === 'build') return bad('built without a plan', `got ${describe(outcome)}`);
+      if (outcome.kind === 'build_proposed') return bad('built without a plan', `got ${describe(outcome)}`);
       return bad('wrong routing', `got ${describe(outcome)}`);
     case 'custom': {
       if (outcome.kind !== 'circuit') return notACircuit(outcome, 'asked instead of building');
@@ -243,8 +243,8 @@ export function describe(outcome: ChatOutcome): string {
       return outcome.origin.kind === 'blocks' ? `blocks ${blockTypes(outcome.origin.blocks)}` : outcome.origin.kind === 'template' ? `template ${outcome.origin.templateId}` : 'custom circuit';
     case 'inventory':
       return `inventory ${outcome.inventory.rooms.length} room(s)`;
-    case 'build':
-      return `build ${outcome.circuits.length} circuit(s)`;
+    case 'build_proposed':
+      return `build proposed for ${outcome.plan.circuits.length} circuit(s)`;
     case 'failed':
       return `failed (${outcome.code})`;
     default:

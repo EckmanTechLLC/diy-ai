@@ -23,7 +23,7 @@ import {
   type ReplyTarget,
 } from '@diy-ai/core';
 import type { ActiveProviderResult, ChatMessage, LlmProvider } from '../llm';
-import { FAILURE_MESSAGES, planBuildFailedText, rulesFailedText, type ChatFailureCode } from './errors';
+import { FAILURE_MESSAGES, rulesFailedText, type ChatFailureCode } from './errors';
 
 /** Retries after an invalid reply; the model is called at most 1 + MAX_RETRIES times per user message. */
 export const MAX_RETRIES = 2;
@@ -34,7 +34,7 @@ export const MAX_CORRECTION_FINDINGS = 8;
 export interface StoredMessage {
   role: 'user' | 'assistant';
   content: string;
-  kind: 'question' | 'circuit' | 'unsupported' | 'error' | 'plan' | 'plan_built' | null;
+  kind: 'question' | 'circuit' | 'unsupported' | 'error' | 'plan' | 'plan_built' | 'build_proposed' | null;
   /** The model's raw structured reply (assistant messages). */
   reply: unknown;
 }
@@ -46,8 +46,8 @@ export type ChatOutcome =
   | { kind: 'inventory'; text: string; reply: unknown; inventory: Inventory; options: PlanOptions; plan: Plan }
   /** The user asked to build, but there is nothing to build (no plan, or already built). Changes nothing. */
   | { kind: 'build_blocked'; text: string; reply: unknown }
-  /** Every circuit of the stored plan, built and checked (no rule errors), in plan order: to be stored all together. */
-  | { kind: 'build'; text: string; reply: unknown; plan: Plan; circuits: BuiltPlanCircuit[] }
+  /** The model asked to build the stored plan. Only a proposal: creates nothing; circuits are made by the explicit build route. */
+  | { kind: 'build_proposed'; text: string; reply: unknown; plan: Plan }
   | { kind: 'circuit'; text: string; reply: unknown; circuit: CircuitModel; origin: CircuitOrigin; /** Add a new circuit, or replace the selected one. */ target: Exclude<ReplyTarget, 'none'>; /** Rule warnings; possibly empty. */ findings: Finding[] }
   | { kind: 'failed'; code: ChatFailureCode; text: string; /** Rule errors behind a rules_failed / block_rule_bug outcome. */ findings?: Finding[] };
 
@@ -277,14 +277,7 @@ export async function runChat(provider: LlmProvider, input: ChatInput): Promise<
           console.error(`Plan build bug: the stored plan could not be computed (${e instanceof Error ? e.name : 'error'})`);
           return failed('plan_build_failed');
         }
-        const built = buildPlanCircuits(plan);
-        if (!built.ok) {
-          // Plans are made of checked blocks: a failure is a bug, so no retry. Logs ids only.
-          console.error(`Plan build bug: circuit "${built.name}" ${built.problem}${built.findings.length ? ` (${[...new Set(built.findings.map((f) => f.ruleId))].join(', ')})` : ''}`);
-          return { kind: 'failed', code: 'plan_build_failed', text: planBuildFailedText(built.name, built.problem, built.findings), findings: built.findings };
-        }
-        const names = built.circuits.map((c, i) => `${i + 1}. ${c.name} - ${c.circuit.devices.find((d) => d.type === 'breaker')?.amps ?? '?'} A`);
-        return { kind: 'build', text: `${res.message.trim()}\n\nBuilt ${built.circuits.length} circuit${built.circuits.length === 1 ? '' : 's'}:\n${names.join('\n')}`, reply: result.reply, plan, circuits: built.circuits };
+        return { kind: 'build_proposed', text: res.message.trim(), reply: result.reply, plan };
       }
       case 'circuit': {
         const findings = checkCircuit(res.circuit, { edition: 'nec-2023' });

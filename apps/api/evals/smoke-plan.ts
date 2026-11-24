@@ -19,7 +19,7 @@ const STEPS = [
     text: 'Basement living space: 8 outlets, 8 recessed lights controlled by 2 switches on either side of the space. A bathroom with 3 outlets, 1 switch, 1 light and a fan. A closet with 1 light and 1 switch. A bedroom with 1 switch, 5 outlets and 2 recessed lights. Plan the circuits.',
   },
   { expect: 'plan', text: 'The closet belongs to the bedroom — put its light on the bedroom circuit.' },
-  { expect: 'plan_built', text: 'Looks good, build it.' },
+  { expect: 'build_proposed', text: 'Looks good, build it.' },
 ];
 
 const requests: string[] = [];
@@ -73,7 +73,7 @@ async function main() {
     }
     if (p.plan) console.log(`    plan: ${p.plan.circuits.map((c: any) => `${c.name} ${c.breakerAmps}A [${c.rooms.map((r: any) => r.name).join('+')}]`).join(' | ')}`);
     if (m.kind !== step.expect) console.log(`    message: ${String(m.content).slice(0, 400)}`);
-    if (m.kind === 'plan_built') console.log(`    created ids ${m.createdCircuitIds.length}; circuits with plan info ${p.circuits.filter((c: any) => c.plan).length}`);
+    if (m.kind === 'build_proposed') console.log(`    proposal shows ${m.plan.circuits.length} circuits; circuits created ${p.circuits.length}`);
   }
   console.log(`HTTP requests: ${requests.length} (${[...new Set(requests)].join(', ')})`);
 }

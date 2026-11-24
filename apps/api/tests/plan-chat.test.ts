@@ -55,6 +55,8 @@ const call = (method: string, path: string, body?: unknown) =>
   app.request(path, { method, headers: body === undefined ? undefined : { 'content-type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) });
 const createProject = async () => (await call('POST', '/api/projects', { name: 'Basement' })).json() as Promise<any>;
 const post = async (id: string, content: string, selectedCircuitId?: string) => (await call('POST', `/api/projects/${id}/messages`, { content, selectedCircuitId })).json() as Promise<any>;
+const buildRoute = (id: string) => call('POST', `/api/projects/${id}/plan/build`);
+const built = async (id: string) => (await buildRoute(id)).json() as Promise<any>;
 const getProject = async (id: string) => (await call('GET', `/api/projects/${id}`)).json() as Promise<any>;
 
 /** Project with the basement inventory stored (one chat turn). */
@@ -131,8 +133,7 @@ describe('context note', () => {
 
   it('says so when the plan is built and sits beside the circuits note', async () => {
     const p = await withPlan();
-    use(scripted(ok(build())).provider);
-    await post(p.id, 'build it');
+    await built(p.id);
     const s = scripted(ok(question('?')));
     use(s.provider);
     await post(p.id, 'hello');
@@ -148,22 +149,17 @@ describe('context note', () => {
 });
 
 describe('build', () => {
-  it('builds every circuit of the basement plan, in plan order, with the plan information, in one step', async () => {
+  it('the build route builds every circuit of the basement plan, in plan order, with the plan information, in one step', async () => {
     const p = await withPlan();
     const plan = planCircuits({ basement: true, rooms: BASEMENT as any });
     expect(plan.circuits).toHaveLength(4);
-    const s = scripted(ok(build('Building the circuits.')));
-    use(s.provider);
-    const body = await post(p.id, 'Looks good, build it.');
-    expect(s.calls).toHaveLength(1);
-    expect(body.assistantMessage.kind).toBe('plan_built');
-    expect(body.assistantMessage.content).toContain('Building the circuits.');
-    expect(body.assistantMessage.content).toContain('Built 4 circuits');
+    const res = await buildRoute(p.id);
+    expect(res.status).toBe(200);
+    const body: any = await res.json();
+    expect(body.project.circuits).toHaveLength(4);
+    expect(body.createdCircuitIds).toEqual(body.project.circuits.map((c: any) => c.id));
     expect(body.project.circuits.map((c: any) => c.name)).toEqual(plan.circuits.map((c) => c.name));
     expect(body.project.circuits.map((c: any) => c.position)).toEqual([0, 1, 2, 3]);
-    expect(body.assistantMessage.createdCircuitIds).toEqual(body.project.circuits.map((c: any) => c.id));
-    expect(body.assistantMessage.plan).toEqual(JSON.parse(JSON.stringify(plan)));
-    expect(body.affectedCircuitId).toBeNull();
     expect(body.project.planBuiltAt).toEqual(expect.any(Number));
     body.project.circuits.forEach((c: any, i: number) => {
       const planned = plan.circuits[i]!;
@@ -174,11 +170,47 @@ describe('build', () => {
     expect(body.project.circuits.some((c: any) => c.plan.protection.gfci === 'first-receptacle')).toBe(true);
     expect(body.project.circuits.some((c: any) => c.plan.protection.afci)).toBe(true);
     expect(db.select().from(circuits).all()).toHaveLength(4);
-    // the plan is still stored, and it is the stored inventory's plan, not model output
+    // a plan_built message with the plan and created ids is stored
+    const list = (await (await call('GET', `/api/projects/${p.id}/messages`)).json()) as any[];
+    const msg = list.at(-1);
+    expect(msg).toMatchObject({ role: 'assistant', kind: 'plan_built', plan: JSON.parse(JSON.stringify(plan)), createdCircuitIds: body.createdCircuitIds });
+    expect(msg.content).toContain('Built 4 circuits');
+    // the plan is still stored, and it is the stored inventory's plan
     expect((await getProject(p.id)).plan).toEqual(JSON.parse(JSON.stringify(plan)));
   });
 
-  it('with no stored plan: a message saying so, no retry, nothing changes', async () => {
+  it('a model build reply is only a proposal: a build_proposed message with the plan, no circuit created, built-at untouched', async () => {
+    const p = await withPlan();
+    const plan = planCircuits({ basement: true, rooms: BASEMENT as any });
+    const s = scripted(ok(build('Building the circuits.')));
+    use(s.provider);
+    const before = db.select().from(projects).all()[0]!;
+    const body = await post(p.id, 'Use at most 6 outlets per circuit.');
+    expect(s.calls).toHaveLength(1);
+    expect(body.assistantMessage).toMatchObject({ kind: 'build_proposed', content: 'Building the circuits.', plan: JSON.parse(JSON.stringify(plan)), createdCircuitIds: null });
+    expect(body.affectedCircuitId).toBeNull();
+    expect(body.project.circuits).toEqual([]);
+    expect(body.project.planBuiltAt).toBeNull();
+    expect(db.select().from(circuits).all()).toHaveLength(0);
+    const after = db.select().from(projects).all()[0]!;
+    expect(after).toEqual({ ...before, updatedAt: after.updatedAt });
+    expect(after.planBuiltAt).toBeNull();
+    expect(db.select().from(messages).all().filter((m) => m.kind === 'plan_built')).toHaveLength(0);
+    expect(db.select().from(messages).all().find((m) => m.kind === 'build_proposed')!.plan).toEqual({ plan: JSON.parse(JSON.stringify(plan)) });
+  });
+
+  it('a model build reply cannot change or delete existing circuits either', async () => {
+    const p = await withPlan();
+    const done = await built(p.id);
+    const snapshot = JSON.stringify(db.select().from(circuits).all());
+    use(scripted(ok(build())).provider);
+    const body = await post(p.id, 'build it');
+    expect(body.assistantMessage.content).toBe(ALREADY_BUILT_TEXT);
+    expect(JSON.stringify(db.select().from(circuits).all())).toBe(snapshot);
+    expect(done.project.circuits).toHaveLength(4);
+  });
+
+  it('a build reply with no stored plan: a message saying so, no retry, nothing changes', async () => {
     const p = await createProject();
     const s = scripted(ok(build()));
     use(s.provider);
@@ -190,10 +222,9 @@ describe('build', () => {
     expect(db.select().from(projects).all()[0]!.planBuiltAt).toBeNull();
   });
 
-  it('building twice: the second says it is already built and adds nothing', async () => {
+  it('a build reply when the plan is already built: says so and adds nothing', async () => {
     const p = await withPlan();
-    use(scripted(ok(build())).provider);
-    await post(p.id, 'build it');
+    await built(p.id);
     const builtAt = db.select().from(projects).all()[0]!.planBuiltAt;
     const s = scripted(ok(build()));
     use(s.provider);
@@ -204,22 +235,39 @@ describe('build', () => {
     expect(db.select().from(projects).all()[0]!.planBuiltAt).toBe(builtAt);
   });
 
+  it('the build route without a plan: 409 NO_PLAN, nothing stored', async () => {
+    const p = await createProject();
+    const res = await buildRoute(p.id);
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ error: { code: 'NO_PLAN' } });
+    expect(db.select().from(messages).all()).toHaveLength(0);
+  });
+
+  it('the build route when already built: 409 PLAN_ALREADY_BUILT, nothing added', async () => {
+    const p = await withPlan();
+    await built(p.id);
+    const messageCount = db.select().from(messages).all().length;
+    const res = await buildRoute(p.id);
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ error: { code: 'PLAN_ALREADY_BUILT' } });
+    expect(db.select().from(circuits).all()).toHaveLength(4);
+    expect(db.select().from(messages).all()).toHaveLength(messageCount);
+  });
+
   it('a changed plan after building clears built-at so it can be built again', async () => {
     const p = await withPlan();
-    use(scripted(ok(build())).provider);
-    await post(p.id, 'build it');
+    await built(p.id);
     use(scripted(ok(inventory(CLOSET_ATTACHED))).provider);
     const body = await post(p.id, 'closet belongs to the bedroom');
     expect(body.project.planBuiltAt).toBeNull();
     expect(body.project.circuits).toHaveLength(4); // existing circuits are untouched
   });
 
-  it('a reply that carries a plan of its own is ignored: circuits come from the stored inventory', async () => {
+  it('a reply that carries a plan of its own is ignored: it is an invalid reply and builds nothing', async () => {
     const p = await withPlan();
     const bad = ok({ ...build(), rooms: [room()], basement: true });
     use(scripted(bad, bad, bad).provider);
     const body = await post(p.id, 'build it');
-    // build with inventory fields set is an invalid reply (retry), so nothing is built from it
     expect(body.assistantMessage.kind).toBe('error');
     expect(db.select().from(circuits).all()).toHaveLength(0);
   });
@@ -228,9 +276,8 @@ describe('build', () => {
 describe('circuits.plan through edits', () => {
   it('manual edits keep it; a chat circuit reply replacing the circuit clears it', async () => {
     const p = await withPlan();
-    use(scripted(ok(build())).provider);
-    const built = await post(p.id, 'build it');
-    const [c0, c1] = built.project.circuits;
+    const done = await built(p.id);
+    const [c0, c1] = done.project.circuits;
     const renamed = await (await call('PUT', `/api/projects/${p.id}/circuits/${c0.id}`, { name: 'Renamed' })).json() as any;
     expect(renamed.project.circuits[0].plan).toEqual(c0.plan);
     const reordered = await (await call('PUT', `/api/projects/${p.id}/circuits/${c0.id}`, { circuit: c0.circuit })).json() as any;
@@ -255,8 +302,7 @@ describe('circuits.plan through edits', () => {
 describe('discard route, payloads and owner scoping', () => {
   it('DELETE /plan clears inventory, options and built-at and leaves circuits', async () => {
     const p = await withPlan();
-    use(scripted(ok(build())).provider);
-    await post(p.id, 'build it');
+    await built(p.id);
     const res = await call('DELETE', `/api/projects/${p.id}/plan`);
     expect(res.status).toBe(200);
     const body: any = await res.json();
@@ -283,14 +329,13 @@ describe('discard route, payloads and owner scoping', () => {
 
   it('message list carries plan and createdCircuitIds; ids of deleted circuits drop out; the raw reply is never returned', async () => {
     const p = await withPlan();
-    use(scripted(ok(build())).provider);
-    const built = await post(p.id, 'build it');
-    const gone = built.project.circuits[0].id;
+    const done = await built(p.id);
+    const gone = done.project.circuits[0].id;
     await call('DELETE', `/api/projects/${p.id}/circuits/${gone}`);
     const list = (await (await call('GET', `/api/projects/${p.id}/messages`)).json()) as any[];
-    expect(list.map((m) => m.kind)).toEqual([null, 'plan', null, 'plan_built']);
+    expect(list.map((m) => m.kind)).toEqual([null, 'plan', 'plan_built']);
     expect(list[1].plan.circuits).toHaveLength(4);
-    expect(list[3].createdCircuitIds).toEqual(built.project.circuits.slice(1).map((c: any) => c.id));
+    expect(list[2].createdCircuitIds).toEqual(done.project.circuits.slice(1).map((c: any) => c.id));
     expect(list[0]).toMatchObject({ plan: null, createdCircuitIds: null });
     expect(JSON.stringify(list)).not.toContain('"reply"');
   });
@@ -301,7 +346,10 @@ describe('discard route, payloads and owner scoping', () => {
     expect((await call('DELETE', `/api/projects/${id}/plan`)).status).toBe(404);
     expect((await call('POST', `/api/projects/${id}/messages`, { content: 'build it' })).status).toBe(404);
     expect((await call('GET', `/api/projects/${id}`)).status).toBe(404);
+    expect((await buildRoute(id)).status).toBe(404);
+    expect(db.select().from(circuits).all()).toHaveLength(0);
     expect(db.select().from(projects).all()[0]!.inventory).not.toBeNull();
+    expect(db.select().from(projects).all()[0]!.planBuiltAt).toBeNull();
     const body = await (await call('DELETE', `/api/projects/nope/plan`)).json();
     expect(body).toMatchObject({ error: { code: 'NOT_FOUND' } });
   });

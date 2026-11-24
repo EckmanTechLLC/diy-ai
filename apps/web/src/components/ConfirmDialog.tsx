@@ -9,6 +9,7 @@ export function ConfirmDialog({
   title,
   description,
   confirmLabel,
+  confirmVariant = 'destructive',
   pending,
   error,
   onConfirm,
@@ -18,6 +19,8 @@ export function ConfirmDialog({
   title: string;
   description: string;
   confirmLabel: string;
+  /** Destructive by default; a plain action (building) passes `default`. */
+  confirmVariant?: 'destructive' | 'default';
   pending: boolean;
   error: unknown;
   onConfirm: () => void;
@@ -34,7 +37,7 @@ export function ConfirmDialog({
           <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={pending}>
             Cancel
           </Button>
-          <Button type="button" variant="destructive" onClick={onConfirm} disabled={pending}>
+          <Button type="button" variant={confirmVariant} onClick={onConfirm} disabled={pending}>
             {pending && <Spinner />}
             {confirmLabel}
           </Button>

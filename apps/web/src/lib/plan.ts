@@ -57,6 +57,27 @@ export function currentPlanMessageId(messages: readonly ChatMessage[]): string |
   return null;
 }
 
+/**
+ * Whether a `build_proposed` message can still be acted on: it is the latest proposal, the project has a stored plan that is
+ * not built, and that plan is the one the proposal showed. Anything else is "no longer current".
+ */
+export function proposalIsCurrent(
+  message: ChatMessage,
+  messages: readonly ChatMessage[],
+  project: { plan: unknown; planBuiltAt: number | null },
+): boolean {
+  if (message.kind !== 'build_proposed' || !message.plan || !project.plan || project.planBuiltAt !== null) return false;
+  const latest = [...messages].reverse().find((m) => m.kind === 'build_proposed');
+  if (latest?.id !== message.id) return false;
+  // A later plan or build message means the plan moved on, even if the numbers came out the same.
+  const after = messages.slice(messages.findIndex((m) => m.id === message.id) + 1);
+  if (after.some((m) => m.kind === 'plan' || m.kind === 'plan_built')) return false;
+  return JSON.stringify(message.plan) === JSON.stringify(project.plan);
+}
+
+/** "Create 4 circuits from this plan?" */
+export const buildQuestion = (n: number) => `Create ${plural(n, 'circuit')} from this plan?`;
+
 /** The small status line near the chat; null when the project has no plan. */
 export function planStatusText(project: { plan: { circuits: unknown[] } | null; planBuiltAt: number | null }): string | null {
   if (!project.plan) return null;

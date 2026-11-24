@@ -411,6 +411,38 @@ describe('plan routes', () => {
     expect(list[1]!.createdCircuitIds).toEqual(['c1', 'c2']);
   });
 
+  it('builds the plan with POST on the plan/build path, no body, and returns the project and created ids', async () => {
+    const fetchMock = stubFetch(() => json({ project: { id: 'p/1', plan, planBuiltAt: 7, circuits: [{ id: 'c1' }, { id: 'c2' }] }, createdCircuitIds: ['c1', 'c2'] }));
+    const res = await api.buildPlan('p/1');
+    expect(fetchMock.mock.calls[0]![0]).toBe('/api/projects/p%2F1/plan/build');
+    expect(fetchMock.mock.calls[0]![1]!.method).toBe('POST');
+    expect(fetchMock.mock.calls[0]![1]!.body).toBeUndefined();
+    expect(res.createdCircuitIds).toEqual(['c1', 'c2']);
+    expect(res.project.planBuiltAt).toBe(7);
+  });
+
+  it('surfaces the build errors: NO_PLAN, PLAN_ALREADY_BUILT and PLAN_BUILD_FAILED with its failed checks', async () => {
+    stubFetch(() => json({ error: { code: 'NO_PLAN', message: 'There is no plan to build yet.' } }, 409));
+    expect(await caught(api.buildPlan('x'))).toMatchObject({ code: 'NO_PLAN', status: 409 });
+    stubFetch(() => json({ error: { code: 'PLAN_ALREADY_BUILT', message: 'This plan is already built.' } }, 409));
+    expect((await caught(api.buildPlan('x'))).code).toBe('PLAN_ALREADY_BUILT');
+    const finding = { ruleId: 'no-short', severity: 'error', message: 'A conductor is shorted.', involved: [], citation: { edition: 'nec-2023', section: null, confirmed: false } };
+    stubFetch(() => json({ error: { code: 'PLAN_BUILD_FAILED', message: 'The plan was not built: circuit "Lights 1" was rejected', issues: [finding] } }, 500));
+    const err = await caught(api.buildPlan('x'));
+    expect(err).toMatchObject({ code: 'PLAN_BUILD_FAILED', status: 500 });
+    expect(err.issues).toEqual([finding]);
+    stubFetch(() => json({ error: { code: 'NOT_FOUND', message: 'Project not found' } }, 404));
+    expect((await caught(api.buildPlan('x'))).code).toBe('NOT_FOUND');
+  });
+
+  it('passes a build_proposed message through with its plan', async () => {
+    stubFetch(() => json([{ id: 'a', role: 'assistant', content: 'Building it.', kind: 'build_proposed', plan, createdCircuitIds: null, createdAt: 1 }]));
+    const [m] = await api.listMessages('p');
+    expect(m!.kind).toBe('build_proposed');
+    expect(m!.plan).toEqual(plan);
+    expect(m!.createdCircuitIds).toBeNull();
+  });
+
   it('parses a plan_build_failed message with its findings, not as a settings error', async () => {
     const finding = { ruleId: 'no-short', severity: 'error', message: 'm', involved: [], citation: { edition: 'nec-2023', section: null, confirmed: false } };
     stubFetch(() =>

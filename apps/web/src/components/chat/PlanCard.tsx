@@ -120,7 +120,7 @@ export function PlanCard({ plan, state }: { plan: Plan; state: PlanCardState }) 
       <footer className="grid gap-0.5 border-t pt-2 text-xs text-muted-foreground">
         {state === 'current' ? (
           <p>
-            Ask me to change anything in this plan, or say <span className="font-medium text-foreground">&quot;build it&quot;</span> to create these circuits.
+            Ask me to change anything in this plan, or press <span className="font-medium text-foreground">Build</span> to create these circuits.
           </p>
         ) : null}
         <p>This plan is not a guarantee of code compliance.</p>

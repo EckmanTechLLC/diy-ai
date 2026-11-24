@@ -198,7 +198,7 @@ async function runCase(c: EvalCase, rec: ReturnType<typeof recording>): Promise<
     });
     if (!grade.pass) break;
     if (outcome.kind === 'failed') break;
-    stored.push({ role: 'assistant', content: outcome.text, kind: outcome.kind === 'circuit' || outcome.kind === 'unsupported' ? outcome.kind : 'question', reply: outcome.reply });
+    stored.push({ role: 'assistant', content: outcome.text, kind: outcome.kind === 'circuit' || outcome.kind === 'unsupported' || outcome.kind === 'build_proposed' ? outcome.kind : 'question', reply: outcome.reply });
     if (!seeded) circuits = outcome.kind === 'circuit' ? [{ id: 'eval', name: 'Circuit 1', circuit: outcome.circuit, origin: outcome.origin }] : [];
   }
   const calls = steps.reduce((n, s) => n + s.calls.length, 0);

@@ -151,7 +151,7 @@ export interface EndpointInput {
   model?: string;
 }
 
-export type MessageKind = 'question' | 'circuit' | 'unsupported' | 'error' | 'plan' | 'plan_built';
+export type MessageKind = 'question' | 'circuit' | 'unsupported' | 'error' | 'plan' | 'plan_built' | 'build_proposed';
 
 /** Why an assistant message is an error; mirrors the API's failure codes. */
 export type MessageErrorCode =
@@ -189,11 +189,17 @@ export interface ChatMessage {
   findings: Finding[] | null;
   /** The circuit a `circuit` message created or replaced; null when none, or when that circuit was deleted later. */
   circuitId: string | null;
-  /** The plan shown by a `plan` message, or the plan that was built by a `plan_built` message; null for other messages and for older ones. */
+  /** The plan shown by a `plan` message, proposed by a `build_proposed` message, or built by a `plan_built` message; null for other messages and for older ones. */
   plan: Plan | null;
   /** The circuits a `plan_built` message created that still exist, in plan order; null for other messages. */
   createdCircuitIds: string[] | null;
   createdAt: number;
+}
+
+/** The answer of the build route: the project with the new circuits, and their ids in plan order. */
+export interface BuildPlanResult {
+  project: Project;
+  createdCircuitIds: string[];
 }
 
 export interface SendMessageResult {
@@ -242,5 +248,7 @@ export const api = {
     request<SendMessageResult>('POST', `/projects/${enc(projectId)}/messages`, selectedCircuitId ? { content, selectedCircuitId } : { content }),
   /** Forgets the stored plan (inventory and options). Circuits already built from it stay. */
   discardPlan: (projectId: string) => request<ProjectChange>('DELETE', `/projects/${enc(projectId)}/plan`),
+  /** Builds the stored plan into circuits (all or nothing). Failures: NO_PLAN and PLAN_ALREADY_BUILT (409), PLAN_BUILD_FAILED (500, the failed checks as issues). */
+  buildPlan: (projectId: string) => request<BuildPlanResult>('POST', `/projects/${enc(projectId)}/plan/build`),
   clearMessages: (projectId: string) => request<void>('DELETE', `/projects/${enc(projectId)}/messages`),
 };

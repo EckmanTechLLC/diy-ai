@@ -69,7 +69,7 @@ export const messages = sqliteTable(
       .references(() => projects.id, { onDelete: 'cascade' }),
     role: text('role', { enum: ['user', 'assistant'] }).notNull(),
     content: text('content').notNull(),
-    kind: text('kind', { enum: ['question', 'circuit', 'unsupported', 'error', 'plan', 'plan_built'] }),
+    kind: text('kind', { enum: ['question', 'circuit', 'unsupported', 'error', 'plan', 'plan_built', 'build_proposed'] }),
     /** The model's raw structured reply (assistant messages only); never returned by the API. */
     reply: text('reply', { mode: 'json' }).$type<unknown>(),
     /** Where the circuit of a `circuit` message came from; null for other messages and for rows stored before it was recorded. */
@@ -80,7 +80,7 @@ export const messages = sqliteTable(
     errorCode: text('error_code'),
     /** Rule findings: those that caused a rejected attempt (error messages) or the warnings accepted with a circuit; null otherwise. */
     findings: text('findings', { mode: 'json' }).$type<Finding[]>(),
-    /** `plan` messages: `{ plan }`, the plan as shown in the message. `plan_built` messages: `{ plan, circuitIds }`, with the ids of the circuits created. Null otherwise. */
+    /** `plan` and `build_proposed` messages: `{ plan }`, the plan as shown in the message. `plan_built` messages: `{ plan, circuitIds }`, with the ids of the circuits created. Null otherwise. */
     plan: text('plan', { mode: 'json' }).$type<MessagePlan>(),
     createdAt: integer('created_at').notNull(),
   },

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ChatMessage } from '../src/api/client';
-import { currentPlanMessageId, loadText, planStatusText, protectionChips, ruleCitation, servedText } from '../src/lib/plan';
+import { buildQuestion, currentPlanMessageId, loadText, proposalIsCurrent, planStatusText, protectionChips, ruleCitation, servedText } from '../src/lib/plan';
 
 const msg = (id: string, kind: ChatMessage['kind'], plan: unknown = null): ChatMessage =>
   ({ id, role: 'assistant', content: '', kind, origin: null, errorCode: null, findings: null, circuitId: null, plan, createdCircuitIds: null, createdAt: 1 }) as ChatMessage;
@@ -60,5 +60,38 @@ describe('planStatusText', () => {
   it('says not built, or when it was built', () => {
     expect(planStatusText({ plan: { circuits: [1, 2, 3, 4] }, planBuiltAt: null })).toBe('Plan: 4 circuits · not built');
     expect(planStatusText({ plan: { circuits: [1] }, planBuiltAt: Date.UTC(2026, 10, 20, 12) })).toMatch(/^Plan: 1 circuit · built .*2026/);
+  });
+});
+
+describe('proposalIsCurrent', () => {
+  const plan = { circuits: [{ name: 'A', breakerAmps: 20 }] };
+  const other = { circuits: [{ name: 'A', breakerAmps: 15 }] };
+  const project = { plan, planBuiltAt: null as number | null };
+
+  it('is current for the latest proposal while the stored plan is the proposed one and not built', () => {
+    const list = [msg('p', 'plan', plan), msg('b', 'build_proposed', plan)];
+    expect(proposalIsCurrent(list[1]!, list, project)).toBe(true);
+  });
+  it('is not current once the plan is built, discarded or changed', () => {
+    const list = [msg('b', 'build_proposed', plan)];
+    expect(proposalIsCurrent(list[0]!, list, { plan, planBuiltAt: 5 })).toBe(false);
+    expect(proposalIsCurrent(list[0]!, list, { plan: null, planBuiltAt: null })).toBe(false);
+    expect(proposalIsCurrent(list[0]!, list, { plan: other, planBuiltAt: null })).toBe(false);
+  });
+  it('is not current when a newer proposal, plan or built message follows', () => {
+    const a = msg('a', 'build_proposed', plan);
+    expect(proposalIsCurrent(a, [a, msg('b', 'build_proposed', plan)], project)).toBe(false);
+    expect(proposalIsCurrent(a, [a, msg('p', 'plan', plan)], project)).toBe(false);
+    expect(proposalIsCurrent(a, [a, msg('p', 'plan_built', plan)], project)).toBe(false);
+  });
+  it('is never current for other kinds or without a plan', () => {
+    const q = msg('q', 'question', plan);
+    expect(proposalIsCurrent(q, [q], project)).toBe(false);
+    const np = msg('n', 'build_proposed', null);
+    expect(proposalIsCurrent(np, [np], project)).toBe(false);
+  });
+  it('words the confirmation question with the circuit count', () => {
+    expect(buildQuestion(4)).toBe('Create 4 circuits from this plan?');
+    expect(buildQuestion(1)).toBe('Create 1 circuit from this plan?');
   });
 });

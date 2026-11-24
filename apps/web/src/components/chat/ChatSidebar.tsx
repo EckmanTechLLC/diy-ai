@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
 import { ArrowDown, Eraser, MessageSquare, PanelRightClose, PanelRightOpen, X } from 'lucide-react';
 import { type Project } from '@/api/client';
-import { isOptimistic, useClaudeModels, useClearMessages, useLlmStatus, useMessages, usePendingSince, useSendMessage } from '@/api/hooks';
+import { isOptimistic, useBuildPlan, useClaudeModels, useClearMessages, useLlmStatus, useMessages, usePendingSince, useSendMessage } from '@/api/hooks';
 import { activeModelName } from '@/components/settings/ActiveModelCard';
 import { PlanStatus } from '@/components/chat/PlanStatus';
 import { Composer } from '@/components/chat/Composer';
@@ -9,7 +9,7 @@ import { MessageBubble } from '@/components/chat/MessageBubble';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { ErrorNotice, Spinner } from '@/components/feedback';
 import { Button } from '@/components/ui/button';
-import { currentPlanMessageId } from '@/lib/plan';
+import { currentPlanMessageId, proposalIsCurrent } from '@/lib/plan';
 import { SIDEBAR_MAX, SIDEBAR_MIN, useMediaQuery, useSidebarPrefs } from '@/lib/prefs';
 import { cn } from '@/lib/utils';
 
@@ -110,6 +110,9 @@ export function ChatSidebar({
   const claudeModels = useClaudeModels(false); // cache only: names are shown when the settings page loaded them
   const messages = useMessages(project.id);
   const send = useSendMessage(project.id);
+  const build = useBuildPlan(project.id);
+  // Proposals the user dismissed with "Not now": for this visit only, no server call.
+  const [dismissed, setDismissed] = useState<ReadonlySet<string>>(new Set());
   const clear = useClearMessages(project.id);
   const since = usePendingSince(project.id);
   const pending = since !== null;
@@ -189,6 +192,15 @@ export function ChatSidebar({
         },
       },
     );
+  };
+  const onBuilt = (ids: string[]) => {
+    // the first circuit the build created becomes the selected one
+    const first = ids[0];
+    if (first) onSelectCircuit(first);
+  };
+  const buildFromCard = () => {
+    build.reset();
+    build.mutate(undefined, { onSuccess: (res) => onBuilt(res.createdCircuitIds) });
   };
   const retry = () => {
     const text = lastSent.current;
@@ -283,6 +295,17 @@ export function ChatSidebar({
                   message={m}
                   pending={isOptimistic(m)}
                   planState={m.id !== currentPlanId ? 'superseded' : project.plan ? 'current' : 'discarded'}
+                  proposal={
+                    m.kind === 'build_proposed'
+                      ? {
+                          state: dismissed.has(m.id) ? 'dismissed' : proposalIsCurrent(m, list, project) ? 'current' : 'stale',
+                          pending: build.isPending,
+                          error: build.error,
+                          onBuild: buildFromCard,
+                          onDismiss: () => setDismissed((d) => new Set(d).add(m.id)),
+                        }
+                      : undefined
+                  }
                   circuits={project.circuits}
                   onSelectCircuit={(id) => {
                     if (!wide) setDrawerOpen(false);
@@ -309,7 +332,7 @@ export function ChatSidebar({
       </div>
 
       <div className="grid shrink-0 gap-2 border-t p-3">
-        <PlanStatus project={project} disabled={pending} />
+        <PlanStatus project={project} disabled={pending} build={build} onBuilt={onBuilt} />
         {send.isError && !pending && (
           <div className="grid gap-1.5">
             <ErrorNotice error={send.error} />

@@ -140,6 +140,16 @@ export function useDiscardPlan(projectId: string) {
   });
 }
 
+/** Building the stored plan creates circuits: the project replaces the cached one and the message list is re-read (the server stored a `plan_built` message). */
+export function useBuildPlan(projectId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.buildPlan(projectId),
+    onSuccess: (res) =>
+      Promise.all([storeProject(qc, res.project), qc.invalidateQueries({ queryKey: keys.messages(projectId) })]),
+  });
+}
+
 export function useDeleteProject() {
   const qc = useQueryClient();
   return useMutation({

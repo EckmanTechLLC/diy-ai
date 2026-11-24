@@ -661,9 +661,9 @@ describe('gradeOutcome', () => {
       return { kind: 'inventory', text: 'm', reply, inventory: res.inventory, options: res.options, plan: res.plan };
     };
     const blocked: ChatOutcome = { kind: 'build_blocked', text: 'no plan', reply: {} };
-    const built = (): ChatOutcome => ({ kind: 'build', text: 'built', reply: {}, plan: (inventoryOutcome() as Extract<ChatOutcome, { kind: 'inventory' }>).plan, circuits: [] });
+    const built = (): ChatOutcome => ({ kind: 'build_proposed', text: 'proposed', reply: {}, plan: (inventoryOutcome() as Extract<ChatOutcome, { kind: 'inventory' }>).plan });
 
-    it('build-1: the loop built the stored plan passes; anything else fails with a pattern', () => {
+    it('build-1: the loop proposed building the stored plan (the model replied build) passes; anything else fails with a pattern', () => {
       const e = byId('build-1').steps[0]!.expect;
       expect(gradeOutcome(e, built()).pass).toBe(true);
       expect(gradeOutcome(e, question)).toMatchObject({ pass: false, pattern: 'asked instead of building' });

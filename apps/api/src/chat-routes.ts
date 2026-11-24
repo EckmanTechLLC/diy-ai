@@ -3,11 +3,12 @@ import { and, eq, sql } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { z } from 'zod';
 import type { Db } from './db';
-import { providerUnavailable, runChat, type ChatOutcome } from './chat/loop';
+import { buildPlanCircuits, providerUnavailable, runChat, type ChatOutcome } from './chat/loop';
+import { FAILURE_MESSAGES, planBuildFailedText } from './chat/errors';
 import { fail, readBody } from './http';
 import type { ActiveProviderResult } from './llm';
 import { getOwnerId } from './owner';
-import { CircuitName, appendCircuit, listCircuits, loadProject, pruneCableLengths, touchProject } from './circuits';
+import { CircuitName, appendCircuit, computePlan, listCircuits, loadProject, pruneCableLengths, touchProject } from './circuits';
 import type { PlanState } from './chat/loop';
 import { circuits, messages, projects } from './schema';
 
@@ -27,7 +28,7 @@ const toApi = (m: MessageRow, existingCircuitIds: ReadonlySet<string> = new Set(
   circuitId: m.circuitId,
   errorCode: m.errorCode,
   findings: m.findings ?? null,
-  /** `plan` and `plan_built` messages: the plan as shown in the message; null otherwise. */
+  /** `plan`, `build_proposed` and `plan_built` messages: the plan as shown in the message; null otherwise. */
   plan: m.plan?.plan ?? null,
   /** `plan_built` messages: the circuits it created that still exist; null otherwise. */
   createdCircuitIds: m.kind === 'plan_built' ? (m.plan?.circuitIds ?? []).filter((id) => existingCircuitIds.has(id)) : null,
@@ -60,6 +61,38 @@ export function chatRoutes(db: Db, resolveProvider: ProviderResolver) {
     if (inFlight.has(project.id)) return fail(c, 409, 'BUSY', 'A reply is still being written for this project. Try again when it finishes.');
     db.update(projects).set({ inventory: null, planOptions: null, planBuiltAt: null, updatedAt: Date.now() }).where(eq(projects.id, project.id)).run();
     return c.json({ project: loadProject(db, project.id, ownerId), affectedCircuitId: null });
+  });
+
+  // Builds the stored plan into circuits. The only code path that creates plan circuits: never reachable from a model reply.
+  // All or nothing: every circuit goes through buildCircuit, validateCircuit and checkCircuit, and nothing is stored if one fails.
+  routes.post('/projects/:id/plan/build', (c) => {
+    const ownerId = getOwnerId();
+    const project = find(c.req.param('id'), ownerId);
+    if (!project) return fail(c, 404, 'NOT_FOUND', 'Project not found');
+    if (inFlight.has(project.id)) return fail(c, 409, 'BUSY', 'A reply is still being written for this project. Try again when it finishes.');
+    if (!project.inventory) return fail(c, 409, 'NO_PLAN', 'There is no plan to build yet.');
+    if (project.planBuiltAt !== null) return fail(c, 409, 'PLAN_ALREADY_BUILT', 'This plan is already built.');
+    const plan = computePlan(project);
+    if (!plan) {
+      console.error('Plan build bug: the stored plan could not be computed');
+      return fail(c, 500, 'PLAN_BUILD_FAILED', FAILURE_MESSAGES.plan_build_failed);
+    }
+    const built = buildPlanCircuits(plan);
+    if (!built.ok) {
+      // Plans are made of checked blocks: a failure is a bug. Logs ids only.
+      console.error(`Plan build bug: circuit "${built.name}" ${built.problem}${built.findings.length ? ` (${[...new Set(built.findings.map((f) => f.ruleId))].join(', ')})` : ''}`);
+      return fail(c, 500, 'PLAN_BUILD_FAILED', planBuildFailedText(built.name, built.problem, built.findings), built.findings);
+    }
+    const names = built.circuits.map((b, i) => `${i + 1}. ${b.name} - ${b.circuit.devices.find((d) => d.type === 'breaker')?.amps ?? '?'} A`);
+    const text = `Built ${built.circuits.length} circuit${built.circuits.length === 1 ? '' : 's'}:\n${names.join('\n')}`;
+    const createdCircuitIds = db.transaction((tx) => {
+      const at = Date.now();
+      const ids = built.circuits.map((b) => appendCircuit(tx, project.id, { name: CircuitName.safeParse(b.name).data, circuit: b.circuit, origin: b.origin, findings: b.findings, plan: b.plan }, at).id);
+      tx.update(projects).set({ planBuiltAt: at, updatedAt: at }).where(eq(projects.id, project.id)).run();
+      tx.insert(messages).values({ id: randomUUID(), projectId: project.id, role: 'assistant', content: text, kind: 'plan_built', reply: null, plan: { plan, circuitIds: ids }, createdAt: at }).run();
+      return ids;
+    });
+    return c.json({ project: loadProject(db, project.id, ownerId), createdCircuitIds });
   });
 
   routes.delete('/projects/:id/messages', (c) => {
@@ -105,13 +138,8 @@ export function chatRoutes(db: Db, resolveProvider: ProviderResolver) {
         const at = Date.now();
         // The only write of a chat-derived circuit: a resolveReply circuit that passed the rule checks (outcome kind 'circuit').
         let affectedCircuitId: string | null = null;
-        let createdIds: string[] | null = null;
-        if (outcome.kind === 'inventory') {
+                if (outcome.kind === 'inventory') {
           tx.update(projects).set({ inventory: outcome.inventory, planOptions: outcome.options, planBuiltAt: null, updatedAt: at }).where(eq(projects.id, id)).run();
-        } else if (outcome.kind === 'build') {
-          // All circuits of the plan in one transaction: each passed validateCircuit and checkCircuit with no rule errors in runChat.
-          createdIds = outcome.circuits.map((b) => appendCircuit(tx, id, { name: CircuitName.safeParse(b.name).data, circuit: b.circuit, origin: b.origin, findings: b.findings, plan: b.plan }, at).id);
-          tx.update(projects).set({ planBuiltAt: at, updatedAt: at }).where(eq(projects.id, id)).run();
         } else if (outcome.kind === 'circuit') {
           const replyName = outcome.origin.kind === 'blocks' ? CircuitName.safeParse(outcome.origin.name) : null;
           const name = replyName?.success ? replyName.data : undefined;
@@ -138,12 +166,12 @@ export function chatRoutes(db: Db, resolveProvider: ProviderResolver) {
             projectId: id,
             role: 'assistant',
             content: outcome.text,
-            // A build that had nothing to build is shown as a plain assistant message.
-            kind: outcome.kind === 'failed' ? 'error' : outcome.kind === 'inventory' ? 'plan' : outcome.kind === 'build' ? 'plan_built' : outcome.kind === 'build_blocked' ? 'question' : outcome.kind,
+            // A build request with nothing to build is shown as a plain assistant message.
+            kind: outcome.kind === 'failed' ? 'error' : outcome.kind === 'inventory' ? 'plan' : outcome.kind === 'build_proposed' ? 'build_proposed' : outcome.kind === 'build_blocked' ? 'question' : outcome.kind,
             reply: outcome.kind === 'failed' ? null : outcome.reply,
             origin: outcome.kind === 'circuit' ? outcome.origin : null,
             circuitId: affectedCircuitId,
-            plan: outcome.kind === 'inventory' ? { plan: outcome.plan } : outcome.kind === 'build' && createdIds ? { plan: outcome.plan, circuitIds: createdIds } : null,
+            plan: outcome.kind === 'inventory' ? { plan: outcome.plan } : outcome.kind === 'build_proposed' ? { plan: outcome.plan } : null,
             errorCode: outcome.kind === 'failed' ? outcome.code : null,
             findings: outcome.kind === 'circuit' ? outcome.findings : outcome.kind === 'failed' ? (outcome.findings ?? null) : null,
             createdAt: Math.max(at, userRow.createdAt),

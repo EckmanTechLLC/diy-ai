@@ -101,7 +101,7 @@ _(Add corrections and recurring mistakes here as they occur)_
 ## Known Issues
 - **Claude reply-schema size (fixed 2026-11-23, task 27).** Claude rejected the schema as "compiled grammar is too large" when the endpoint sub-schema was inlined twice; it is now defined once under `$defs` (lossless). The schema sits close to Claude's limit: any addition to `reply.ts` can re-break it (see Lessons Learned 2). Claude v3 test set: 39/43.
 - **Test set v4 (2026-11-23, 61 cases, one run each):** Claude 60/61, `gpt-oss-120b` 54/61, `qwen3.6-coder` 43/61. Details in `apps/api/evals/results/comparison-v4.md` (local only).
-- **Unrequested build (found by v4 case `edit-3`):** both local models replied `build` to "Use at most 6 outlets per circuit." and the loop built the stored plan's circuits. Claude did not. Nothing in code stops a `build` reply the user did not ask for.
+- **Unrequested build (found by v4 case `edit-3`, fixed 2026-11-24, task 38):** local models replied `build` to a message that did not ask for it. A model `build` reply is now only a proposal (`build_proposed` message); circuits are created only by `POST /api/projects/:id/plan/build`, which the user triggers with a Build button. Keep it that way: no model reply may create plan circuits.
 - **Eval case `mb-6`** still has "(not GFCI)" in its user text; `qwen3.6-coder` declines it for that reason.
 
 ## Current Decisions (quick reference)
